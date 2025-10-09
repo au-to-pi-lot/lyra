@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -g -I$(pwd)/vcpkg_installed/x64-linux/include
-LDFLAGS =- I$(pwd)/vcpkg_installed/x64-linux/lib
+LDFLAGS = -I$(pwd)/vcpkg_installed/x64-linux/lib
 PKG_CONFIG_PATH=$(pwd)/vcpkg_installed/x64-linux/lib/pkgconfig:$(pwd)/vcpkg_installed/x64-linux/share/pkgconfig:$PKG_CONFIG_PATH
 
 SRC_DIR = src
