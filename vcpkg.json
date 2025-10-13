@@ -1,0 +1,9 @@
+{
+  "name": "lyra",
+  "version": "0.1.0",
+  "dependencies": [
+    "uthash",
+    "check",
+    "libedit"
+  ]
+}
