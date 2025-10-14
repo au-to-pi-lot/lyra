@@ -29,6 +29,33 @@ typedef enum CallableType{
     DERIVED_MACRO
 } CallableType;
 
+// Object types for GC (so we know how to free them properly)
+typedef enum GCObjectType {
+    GC_VALUE,
+    GC_CONS,
+    GC_CLOSURE,
+    GC_CALLABLE,
+    GC_VARIABLE,
+    GC_UTSTRING
+} GCObjectType;
+
+// GC-managed object header
+typedef struct GCObject {
+    struct GCObject *next;
+    bool marked;
+    size_t size;
+    GCObjectType type;
+    void *data;  // pointer to the actual Value/Cons/Closure/etc
+} GCObject;
+
+// GC state
+typedef struct GC {
+    GCObject *head;
+    size_t num_objects;
+    size_t max_objects;  // trigger GC when we hit this
+} GC;
+
+
 struct Cons {
     Value *car;
     Value *cdr;
@@ -45,7 +72,7 @@ struct Closure {
     Closure *parent;
 };
 
-typedef Value *(*Intrinsic)(Closure *closure, Value *args);
+typedef Value *(*Intrinsic)(GC *gc, Closure *closure, Value *args);
 
 struct Derived {
     Closure *closure;
@@ -76,5 +103,3 @@ struct Value {
     ValueType type;
     ValueData data;
 };
-
-Value *make_value(ValueType type, ValueData data);

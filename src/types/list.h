@@ -1,6 +1,7 @@
 #pragma once
 
 #include "value.h"
+#include "../gc.h"
 #include <stdbool.h>
 
 extern Value NIL_VALUE;
@@ -25,17 +26,17 @@ bool is_nil(Value *list);
 /// @param item 
 /// @param list 
 /// @return The new list including the new item
-Value *list_append(Value *item, Value *list);
+Value *list_append(GC *gc, Value *item, Value *list);
 
 /// @brief Create a new list with all integers [0, stop) in order
 /// @param stop 
 /// @return 
-Value *list_range(int stop);
+Value *list_range(GC *gc, int stop);
 
 /// @brief Create a new list of specified length filled with nil values
 /// @param length 
 /// @return 
-Value *make_list(int length);
+Value *make_list(GC *gc, int length);
 
 /// @brief Get the first element of the list; if the list is nil, returns nil
 /// @param list 
@@ -50,12 +51,12 @@ Value *list_tail(Value *list);
 /// @brief Allocate a shallow copy of the list
 /// @param list 
 /// @return 
-Value *list_copy(Value *list);
+Value *list_copy(GC *gc, Value *list);
 
 /// @brief Allocate a shallow copy of the list; return both a pointer to the head of the list and a pointer to the last value for optimization purposes
 /// @param list 
 /// @return 
-ListWithEnd list_copy_with_end(Value *list);
+ListWithEnd list_copy_with_end(GC *gc, Value *list);
 
 /// @brief Get the item in the list at the specified index
 /// @param list 
@@ -67,7 +68,7 @@ Value *list_index(Value *list, int index);
 /// @param left 
 /// @param right 
 /// @return A new list which contains all of the items in the left followed by all of the items in the right
-Value *list_concat(Value *left, Value *right);
+Value *list_concat(GC *gc, Value *left, Value *right);
 
 /// @brief Remove the first n items of the list
 /// @param list 
@@ -79,15 +80,15 @@ Value *list_drop(Value *list, int n);
 /// @param list 
 /// @param n 
 /// @return List with all items removed; if list is shorter than n, returns whole list
-Value *list_keep(Value *list, int n);
+Value *list_keep(GC *gc, Value *list, int n);
 
 /// @brief Returns the input list in reverse order
 /// @param list 
 /// @return 
-Value *list_reverse(Value *list);
+Value *list_reverse(GC *gc, Value *list);
 
-Value *list_map(Value *(*func)(Value *item), Value *list);
+Value *list_map(GC *gc, Value *(*func)(Value *item), Value *list);
 
-Value *list_fold(Value *(*func)(Value *accumulator, Value *item), Value *list, Value *start);
+Value *list_fold(GC *gc, Value *(*func)(GC *gc, Value *accumulator, Value *item), Value *list, Value *start);
 
-Value *list_filter(bool (*func)(Value *item), Value *list);
+Value *list_filter(GC *gc, bool (*func)(Value *item), Value *list);

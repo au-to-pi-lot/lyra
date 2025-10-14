@@ -2,5 +2,6 @@
 
 #include "types/value.h"
 #include "closure.h"
+#include "gc.h"
 
-Value *evaluate(Closure *closure, Value *expr);
+Value *evaluate(GC *gc, Closure *closure, Value *expr);

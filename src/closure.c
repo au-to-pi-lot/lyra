@@ -12,8 +12,9 @@ void set_var(GC *gc, Closure *closure, UT_string *key, Value *value) {
     Variable *def;
 
     HASH_FIND(hh, closure->defs, utstring_body(key), utstring_len(key), def);
+    
     if (def == NULL) {
-        def = (Variable *)malloc(sizeof(Variable));
+        def = gc_alloc_variable(gc);
         def->key = key;
 
         HASH_ADD_KEYPTR(hh, closure->defs, utstring_body(key), utstring_len(key), def);

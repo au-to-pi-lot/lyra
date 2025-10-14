@@ -3,81 +3,108 @@
 #include "../src/parser.h"
 #include "../src/types/value.h"
 #include "../src/types/list.h"
+#include "../src/gc.h"
 
 START_TEST(test_parse_integer)
 {
-    Value *result = parse("42");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "42");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_negative_integer)
 {
-    Value *result = parse("-17");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "-17");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, -17);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_float)
 {
-    Value *result = parse("3.14");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "3.14");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, FLOAT);
     ck_assert_float_eq(result->data.as_float, 3.14);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_string)
 {
-    Value *result = parse("\"hello world\"");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "\"hello world\"");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, STRING);
     ck_assert_str_eq(utstring_body(result->data.as_string), "hello world");
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_string_with_escapes)
 {
-    Value *result = parse("\"hello\\nworld\\t!\"");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "\"hello\\nworld\\t!\"");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, STRING);
     ck_assert_str_eq(utstring_body(result->data.as_string), "hello\nworld\t!");
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_symbol)
 {
-    Value *result = parse("foo");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "foo");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, SYMBOL);
     ck_assert_str_eq(utstring_body(result->data.as_symbol), "foo");
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_operator_symbol)
 {
-    Value *result = parse("+");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "+");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, SYMBOL);
     ck_assert_str_eq(utstring_body(result->data.as_symbol), "+");
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_empty_list)
 {
-    Value *result = parse("()");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "()");
     ck_assert_ptr_nonnull(result);
     ck_assert(is_nil(result));
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_simple_list)
 {
-    Value *result = parse("(1 2 3)");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "(1 2 3)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, CONS);
     ck_assert_int_eq(list_length(result), 3);
@@ -86,12 +113,15 @@ START_TEST(test_parse_simple_list)
     ck_assert_int_eq(list_index(result, 0)->data.as_int, 1);
     ck_assert_int_eq(list_index(result, 1)->data.as_int, 2);
     ck_assert_int_eq(list_index(result, 2)->data.as_int, 3);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_nested_list)
 {
-    Value *result = parse("(1 (2 3) 4)");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "(1 (2 3) 4)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(list_length(result), 3);
 
@@ -105,12 +135,15 @@ START_TEST(test_parse_nested_list)
     ck_assert_int_eq(list_index(nested, 1)->data.as_int, 3);
 
     ck_assert_int_eq(list_index(result, 2)->data.as_int, 4);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_function_call)
 {
-    Value *result = parse("(+ 1 2)");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "(+ 1 2)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(list_length(result), 3);
 
@@ -120,30 +153,39 @@ START_TEST(test_parse_function_call)
 
     ck_assert_int_eq(list_index(result, 1)->data.as_int, 1);
     ck_assert_int_eq(list_index(result, 2)->data.as_int, 2);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_with_comments)
 {
-    Value *result = parse("; comment\n42");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "; comment\n42");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_list_with_whitespace)
 {
-    Value *result = parse("(  1   2   3  )");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "(  1   2   3  )");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(list_length(result), 3);
     ck_assert_int_eq(list_index(result, 0)->data.as_int, 1);
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_parse_mixed_types)
 {
-    Value *result = parse("(foo 42 \"bar\" 3.14)");
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "(foo 42 \"bar\" 3.14)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(list_length(result), 4);
 
@@ -151,6 +193,7 @@ START_TEST(test_parse_mixed_types)
     ck_assert_int_eq(list_index(result, 1)->type, INT);
     ck_assert_int_eq(list_index(result, 2)->type, STRING);
     ck_assert_int_eq(list_index(result, 3)->type, FLOAT);
+    gc_free_all(&gc);
 }
 END_TEST
 

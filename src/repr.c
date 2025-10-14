@@ -2,6 +2,8 @@
 #include "types/value.h"
 #include "types/list.h"
 
+static UT_string *repr_internal(Value *val, UT_string *out);
+
 UT_string *repr_string(UT_string *s, UT_string *out) {
     utstring_printf(out, "\"");
     char *body = utstring_body(s);
@@ -37,7 +39,7 @@ UT_string *repr_list(Value *list, UT_string *out) {
     utstring_printf(out, "(");
     
     for (Value *item = list_head(list); !is_nil(list); list = list_tail(list), item = list_head(list)) {
-        repr(item, out);
+        repr_internal(item, out);
         if (!is_nil(list_tail(list))) {
             utstring_printf(out, " ");
         }
@@ -47,11 +49,7 @@ UT_string *repr_list(Value *list, UT_string *out) {
     return out;
 }
 
-UT_string *repr(Value *val, UT_string *out) {
-    if (out == NULL) {
-        utstring_new(out);
-    }
-
+static UT_string *repr_internal(Value *val, UT_string *out) {
     switch (val->type) {
         case CONS:
             repr_list(val, out);
@@ -86,4 +84,9 @@ UT_string *repr(Value *val, UT_string *out) {
     }
 
     return out;
+}
+
+UT_string *repr(GC *gc, Value *val) {
+    UT_string *result = gc_alloc_string(gc);
+    return repr_internal(val, result);
 }

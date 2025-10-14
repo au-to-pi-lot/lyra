@@ -4,16 +4,16 @@
 #include "closure.h"
 
 // Core intrinsic functions
-Value *intrinsic_lambda(Closure *closure, Value *args);
-Value *intrinsic_if(Closure *closure, Value *args);
-Value *intrinsic_define(Closure *closure, Value *args);
+Value *intrinsic_lambda(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_if(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_define(GC *gc, Closure *closure, Value *args);
 
 // Arithmetic intrinsics
-Value *intrinsic_add(Closure *closure, Value *args);
-Value *intrinsic_sub(Closure *closure, Value *args);
-Value *intrinsic_mul(Closure *closure, Value *args);
-Value *intrinsic_div(Closure *closure, Value *args);
-Value *intrinsic_divmod(Closure *closure, Value *args);
+Value *intrinsic_add(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_sub(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_mul(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_div(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_divmod(GC *gc, Closure *closure, Value *args);
 
 // Comparison intrinsics
-Value *intrinsic_eq(Closure *closure, Value *args);
+Value *intrinsic_eq(GC *gc, Closure *closure, Value *args);

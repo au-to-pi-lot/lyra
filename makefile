@@ -13,7 +13,7 @@ endif
 SRC_DIR = src
 BUILD_DIR = build
 TEST_DIR = tests
-TARGET = lisp
+TARGET = lyra
 
 SRCS = $(shell find $(SRC_DIR) -name '*.c')
 OBJS = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)

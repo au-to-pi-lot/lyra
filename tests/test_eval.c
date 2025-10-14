@@ -6,236 +6,307 @@
 #include "../src/closure.h"
 #include "../src/types/value.h"
 #include "../src/types/list.h"
+#include "../src/gc.h"
 
 // Helper to parse and evaluate
-static Value* eval_string(Closure *closure, const char *input) {
-    Value *parsed = parse(input);
+static Value* eval_string(GC *gc, Closure *closure, const char *input) {
+    Value *parsed = parse(gc, input);
     if (!parsed) return NULL;
-    return evaluate(closure, parsed);
+    return evaluate(gc, closure, parsed);
 }
 
 START_TEST(test_eval_integer)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "42");
+    Value *result = eval_string(&gc, closure, "42");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_float)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "3.14");
+    Value *result = eval_string(&gc, closure, "3.14");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, FLOAT);
     ck_assert_float_eq(result->data.as_float, 3.14);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_string)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "\"hello\"");
+    Value *result = eval_string(&gc, closure, "\"hello\"");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, STRING);
     ck_assert_str_eq(utstring_body(result->data.as_string), "hello");
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_add)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(+ 1 2)");
+    Value *result = eval_string(&gc, closure, "(+ 1 2)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 3);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_add_multiple)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(+ 1 2 3 4)");
+    Value *result = eval_string(&gc, closure, "(+ 1 2 3 4)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 10);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_sub)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(- 10 3)");
+    Value *result = eval_string(&gc, closure, "(- 10 3)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 7);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_mul)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(* 3 4)");
+    Value *result = eval_string(&gc, closure, "(* 3 4)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 12);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_div)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(/ 20 4)");
+    Value *result = eval_string(&gc, closure, "(/ 20 4)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, FLOAT);
     ck_assert_float_eq(result->data.as_float, 5.0);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_nested_arithmetic)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(+ (* 2 3) (* 4 5))");
+    Value *result = eval_string(&gc, closure, "(+ (* 2 3) (* 4 5))");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 26);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_quote)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(quote (1 2 3))");
+    Value *result = eval_string(&gc, closure, "(quote (1 2 3))");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, CONS);
     ck_assert_int_eq(list_length(result), 3);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_define)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    eval_string(closure, "(define x 42)");
-    Value *result = eval_string(closure, "x");
+    eval_string(&gc, closure, "(define x 42)");
+    Value *result = eval_string(&gc, closure, "x");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_if_true)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(if true 10 20)");
+    Value *result = eval_string(&gc, closure, "(if true 10 20)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 10);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_if_false)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(if false 10 20)");
+    Value *result = eval_string(&gc, closure, "(if false 10 20)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 20);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_lambda)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    Value *result = eval_string(closure, "(lambda (x) x)");
+    Value *result = eval_string(&gc, closure, "(lambda (x) x)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, FUNCTION);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_lambda_call)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    eval_string(closure, "(define identity (lambda (x) x))");
-    Value *result = eval_string(closure, "(identity 42)");
+    eval_string(&gc, closure, "(define identity (lambda (x) x))");
+    Value *result = eval_string(&gc, closure, "(identity 42)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_lambda_with_arithmetic)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    eval_string(closure, "(define double (lambda (x) (* x 2)))");
-    Value *result = eval_string(closure, "(double 21)");
+    eval_string(&gc, closure, "(define double (lambda (x) (* x 2)))");
+    Value *result = eval_string(&gc, closure, "(double 21)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_closure)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
-    eval_string(closure, "(define x 10)");
-    eval_string(closure, "(define add-x (lambda (y) (+ x y)))");
-    Value *result = eval_string(closure, "(add-x 5)");
+    eval_string(&gc, closure, "(define x 10)");
+    eval_string(&gc, closure, "(define add-x (lambda (y) (+ x y)))");
+    Value *result = eval_string(&gc, closure, "(add-x 5)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 15);
+
+    gc_free_all(&gc);
 }
 END_TEST
 
 START_TEST(test_eval_z_combinator_factorial)
 {
-    Closure *closure = make_closure(NULL);
-    prelude(closure);
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
 
     // Define Z combinator (call-by-value Y combinator)
     // The extra lambda delays evaluation
-    eval_string(closure,
+    eval_string(&gc, closure,
         "(define Z (lambda (f) "
         "  ((lambda (x) (f (lambda (v) ((x x) v)))) "
         "   (lambda (x) (f (lambda (v) ((x x) v)))))))");
 
     // Define factorial using Z
-    eval_string(closure,
+    eval_string(&gc, closure,
         "(define factorial "
         "  (Z (lambda (self) "
         "       (lambda (n) "
@@ -244,10 +315,12 @@ START_TEST(test_eval_z_combinator_factorial)
         "             (* n (self (- n 1))))))))");
 
     // Test factorial(1) = 1 (simpler test)
-    Value *result = eval_string(closure, "(factorial 1)");
+    Value *result = eval_string(&gc, closure, "(factorial 1)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 1);
+
+    gc_free_all(&gc);
 }
 END_TEST
 

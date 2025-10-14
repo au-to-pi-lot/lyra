@@ -16,7 +16,7 @@ static char *prompt(EditLine *el) {
     return "> ";
 }
 
-void repl(Closure *global) {
+void repl(GC *gc, Closure *global) {
     EditLine *el;
     History *hist;
     HistEvent ev;
@@ -45,19 +45,22 @@ void repl(Closure *global) {
         // Add to history
         history(hist, &ev, H_ENTER, line);
 
-        Value *ast = parse(line);
+        Value *ast = parse(gc, line);
         if (ast == NULL) {
             printf("Parse error\n");
             continue;
         }
 
-        Value *result = evaluate(global, ast);
+        Value *result = evaluate(gc, global, ast);
         if (result == NULL) {
             printf("Evaluation error\n");
             continue;
         }
 
-        printf("%s\n", utstring_body(repr(result, NULL)));
+        printf("%s\n", utstring_body(repr(gc, result)));
+
+        // Run garbage collection after each REPL expression
+        gc_collect(gc, global);
     }
 
     printf("\n");
@@ -65,7 +68,7 @@ void repl(Closure *global) {
     el_end(el);
 }
 
-void run_file(Closure *global, const char *filename) {
+void run_file(GC *gc, Closure *global, const char *filename) {
     FILE *f = fopen(filename, "rb");
     if (f == NULL) {
         fprintf(stderr, "Error: Could not open file '%s'\n", filename);
@@ -82,37 +85,43 @@ void run_file(Closure *global, const char *filename) {
 
     string[fsize] = 0;
 
-    Value *ast = parse(string);
+    Value *ast = parse(gc, string);
     if (ast == NULL) {
         fprintf(stderr, "Parse error in file '%s'\n", filename);
         free(string);
         exit(1);
     }
 
-    Value *result = evaluate(global, ast);
+    Value *result = evaluate(gc, global, ast);
     if (result == NULL) {
         fprintf(stderr, "Evaluation error in file '%s'\n", filename);
         free(string);
         exit(1);
     }
 
-    printf("%s\n", utstring_body(repr(result, NULL)));
+    printf("%s\n", utstring_body(repr(gc, result)));
     free(string);
+
+    // Run garbage collection after file evaluation
+    gc_collect(gc, global);
 }
 
 int main(int argc, char **argv) {
     GC gc;
     gc_init(&gc);
-    Closure *global = make_closure(gc, NULL);
-    prelude(global);
+    Closure *global = make_closure(&gc, NULL);
+    prelude(&gc, global);
 
     if (argc < 2) {
         // No arguments: enter REPL mode
-        repl(global);
+        repl(&gc, global);
     } else {
         // File mode
-        run_file(global, argv[1]);
+        run_file(&gc, global, argv[1]);
     }
+
+    // Clean up all GC-managed memory before exit
+    gc_free_all(&gc);
 
     return 0;
 }

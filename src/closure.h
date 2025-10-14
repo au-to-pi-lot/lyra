@@ -1,10 +1,11 @@
 #pragma once
 
 #include "types/value.h"
+#include "gc.h"
 
 Closure *make_closure(GC *gc, Closure *parent);
 
-void set_var(Closure *closure, UT_string *key, Value *value);
+void set_var(GC *gc, Closure *closure, UT_string *key, Value *value);
 
 Value *get_var(Closure *closure, UT_string *key);
 

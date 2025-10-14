@@ -1,7 +1,6 @@
 #pragma once
 
 #include <utstring.h>
-
 #include "types/value.h"
 
 // Token types
@@ -32,7 +31,7 @@ typedef struct {
 } Lexer;
 
 // Parse a string into a Value
-Value* parse(const char* input);
+Value* parse(GC *gc, const char* input);
 
 // Parse from UT_string for compatibility
-Value* parse_utstring(UT_string* str);
+Value* parse_utstring(GC *gc, UT_string* str);

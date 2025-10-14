@@ -1,5 +1,6 @@
 #pragma once
 
 #include "closure.h"
+#include "gc.h"
 
-void prelude(Closure *closure);
+void prelude(GC *gc, Closure *closure);

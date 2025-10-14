@@ -1,21 +1,20 @@
 #include "parser.h"
 #include "types/list.h"
+#include "types/float.h"
+#include "types/int.h"
+#include "types/string.h"
+#include "types/symbol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
 
-// Helper to create tokens
+// Helper to create tokens (takes ownership of value)
 static Token make_token(TokenType type, UT_string *value, size_t line, size_t column) {
     Token tok;
     tok.type = type;
-    if (value != NULL) {
-        utstring_new(tok.value);
-        utstring_concat(tok.value, value);
-    } else {
-        tok.value = NULL;
-    }
+    tok.value = value;  // transfer ownership, no copy
     tok.line = line;
     tok.column = column;
     return tok;
@@ -135,7 +134,6 @@ static Token lex_symbol(Lexer* lex) {
     UT_string *buffer;
     utstring_new(buffer);
 
-
     // Symbols can contain letters, digits, and special chars like +, -, *, /, etc.
     while (peek(lex) != '\0' && !isspace(peek(lex)) &&
            peek(lex) != '(' && peek(lex) != ')' && peek(lex) != '"') {
@@ -187,49 +185,46 @@ static Token next_token(Lexer* lex) {
 }
 
 // Forward declarations for parser
-static Value* parse_expr(Lexer* lex, Token* current);
-static Value* parse_list(Lexer* lex);
+static Value* parse_expr(GC *gc, Lexer* lex, Token* current);
+static Value* parse_list(GC *gc, Lexer* lex);
 
 // Parse an atom (number, string, or symbol)
-static Value* parse_atom(Token* tok) {
-    Value* val = malloc(sizeof(Value));
+static Value* parse_atom(GC *gc, Token* tok) {
+    Value* val = NULL;
 
     switch (tok->type) {
         case TOKEN_NUMBER: {
             // Check if it's a float or int
             if (utstring_find(tok->value, 0, ".", 1) >= 0) {
-                val->type = FLOAT;
-                val->data.as_float = atof(utstring_body(tok->value));
+                val = make_float(gc, atof(utstring_body(tok->value)));
             } else {
-                val->type = INT;
-                val->data.as_int = atoi(utstring_body(tok->value));
+                val = make_int(gc, atoi(utstring_body(tok->value)));
             }
             break;
         }
 
         case TOKEN_STRING:
-            val->type = STRING;
-            utstring_new(val->data.as_string);
-            utstring_concat(val->data.as_string, tok->value);
+            UT_string *str = gc_alloc_string(gc);
+            utstring_concat(str, tok->value);
+            val = make_string(gc, str);
             break;
 
         case TOKEN_SYMBOL:
-            val->type = SYMBOL;
-            utstring_new(val->data.as_symbol);
-            utstring_concat(val->data.as_symbol, tok->value);
+            UT_string *sym = gc_alloc_string(gc);
+            utstring_concat(sym, tok->value);
+            val = make_symbol(gc, sym);
             break;
 
         default:
             fprintf(stderr, "Unexpected token type in parse_atom\n");
-            free(val);
-            return NULL;
+            break;
     }
 
     return val;
 }
 
 // Parse a list: ( expr1 expr2 ... )
-static Value* parse_list(Lexer* lex) {
+static Value* parse_list(GC *gc, Lexer* lex) {
     // We've already seen the '(', build a list of values then reverse it
     Value* result = NIL;
 
@@ -247,31 +242,31 @@ static Value* parse_list(Lexer* lex) {
             return NULL;
         }
 
-        Value* elem = parse_expr(lex, &tok);
+        Value* elem = parse_expr(gc, lex, &tok);
         if (!elem) {
             return NULL;
         }
 
-        result = list_append(elem, result);
+        result = list_append(gc, elem, result);
     }
 
-    return list_reverse(result);
+    return list_reverse(gc, result);
 }
 
 // Parse a single expression
-static Value* parse_expr(Lexer* lex, Token* current) {
+static Value* parse_expr(GC *gc, Lexer* lex, Token* current) {
     if (current->type == TOKEN_LPAREN) {
         free_token(current);
-        return parse_list(lex);
+        return parse_list(gc, lex);
     } else {
-        Value* val = parse_atom(current);
+        Value* val = parse_atom(gc, current);
         free_token(current);
         return val;
     }
 }
 
 // Main parse function
-Value* parse(const char* input) {
+Value* parse(GC *gc, const char* input) {
     Lexer lex = make_lexer(input);
     Token tok = next_token(&lex);
 
@@ -280,10 +275,10 @@ Value* parse(const char* input) {
         return NULL;
     }
 
-    return parse_expr(&lex, &tok);
+    return parse_expr(gc, &lex, &tok);
 }
 
 // Parse from UT_string
-Value* parse_utstring(UT_string* str) {
-    return parse(utstring_body(str));
+Value* parse_utstring(GC *gc, UT_string* str) {
+    return parse(gc, utstring_body(str));
 }

@@ -1,7 +1,7 @@
 #include "list.h"
 #include "cons.h"
 #include "value.h"
-#include "gc.h"
+#include "../gc.h"
 
 Value NIL_VALUE = {.type = CONS, .data = {.as_cons = NULL}};
 Value *NIL = &NIL_VALUE;
@@ -24,26 +24,29 @@ bool is_nil(Value *val) {
 
 Value *list_append(GC *gc, Value *item, Value *list) {
     Cons *cons = gc_alloc_cons(gc);
-    Value *val = gc_alloc_value(gc);
-    Value *val = make_value(CONS, (ValueData)cons);
+
+    cons->car = item;
+    cons->cdr = list;
+
+    Value *val = gc_alloc_value(gc, CONS, (ValueData){.as_cons = cons});
+
     return val;
 }
 
-Value *list_range(int stop) {
+Value *list_range(GC *gc, int stop) {
     Value *result = NIL;
     for (int i = stop - 1; i >= 0; i--) {
-        result = list_append(make_value(INT, (ValueData)i), result);
+        result = list_append(gc, gc_alloc_value(gc, INT, (ValueData){.as_int = i}), result);
     }
 
     return result;
 }
 
-Value *make_list(int length) {
-    Value *nil = NIL;
-    Value *result = nil;
+Value *make_list(GC *gc, int length) {
+    Value *result = NIL;
 
     for(int i = 0; i < length; i++) {
-        result = list_append(nil, result);
+        result = list_append(gc, NIL, result);
     }
 
     return result;
@@ -77,7 +80,7 @@ Value *list_drop(Value *list, int n) {
 
 // Internal helper: shallow copy up to max_items elements (or all if max_items < 0)
 // Builds list in single forward pass for O(n) performance
-static ListWithEnd list_copy_internal(Value *list, int max_items) {
+static ListWithEnd list_copy_internal(GC *gc, Value *list, int max_items) {
     if (is_nil(list)) {
         return (ListWithEnd){
             .list = list,
@@ -99,9 +102,9 @@ static ListWithEnd list_copy_internal(Value *list, int max_items) {
     int count = 0;
 
     do {
-        Cons *cons = malloc(sizeof(Cons));
+        Cons *cons = gc_alloc_cons(gc);
         cons->car = current->data.as_cons->car;
-        Value *val = make_value(CONS, (ValueData)cons);
+        Value *val = gc_alloc_value(gc, CONS, (ValueData){.as_cons = cons});
 
         if (result == NULL) {
             result = end = val;
@@ -121,12 +124,12 @@ static ListWithEnd list_copy_internal(Value *list, int max_items) {
     };
 }
 
-Value *list_keep(Value *list, int n) {
-    return list_copy_internal(list, n).list;
+Value *list_keep(GC *gc, Value *list, int n) {
+    return list_copy_internal(gc, list, n).list;
 }
 
-Value *list_copy(Value *list) {
-    return list_copy_internal(list, -1).list;
+Value *list_copy(GC *gc, Value *list) {
+    return list_copy_internal(gc, list, -1).list;
 }
 
 Value *list_index(Value *list, int index) {
@@ -142,7 +145,7 @@ Value *list_index(Value *list, int index) {
     return list_head(current);
 }
 
-Value *list_concat(Value *left, Value *right) {
+Value *list_concat(GC *gc, Value *left, Value *right) {
     if (is_nil(right)) {
         return left;
     }
@@ -151,26 +154,26 @@ Value *list_concat(Value *left, Value *right) {
         return right;
     }
 
-    ListWithEnd left_copy = list_copy_internal(left, -1);
+    ListWithEnd left_copy = list_copy_internal(gc, left, -1);
     left_copy.end->data.as_cons->cdr = right;
 
     return left_copy.list;
 }
 
-Value *list_reverse(Value *list) {
+Value *list_reverse(GC *gc, Value *list) {
     Value *result = NIL;
     Value *current = list;
 
     while (!is_nil(current)) {
-        result = list_append(list_head(current), result);
+        result = list_append(gc, list_head(current), result);
         current = list_tail(current);
     }
 
     return result;
 }
 
-Value *list_map(Value *(*func)(Value *item), Value *list) {
-    Value *copy = list_copy(list);
+Value *list_map(GC *gc, Value *(*func)(Value *item), Value *list) {
+    Value *copy = list_copy(gc, list);
 
     for (Value **item = &copy->data.as_cons->car; !is_nil(copy); copy = list_tail(copy), item = &copy->data.as_cons->car) {
         *item = func(*item);
@@ -179,18 +182,18 @@ Value *list_map(Value *(*func)(Value *item), Value *list) {
     return copy;
 }
 
-Value *list_fold(Value *(*func)(Value *accumulator, Value *item), Value *list, Value *start) {
+Value *list_fold(GC *gc, Value *(*func)(GC *gc, Value *accumulator, Value *item), Value *list, Value *start) {
     Value *accumulator = start;
     Value *current = list;
 
     while(!is_nil(current)) {
-        accumulator = func(accumulator, list_head(current));
+        accumulator = func(gc, accumulator, list_head(current));
         current = list_tail(current);
     }
 
     return accumulator;
 }
 
-Value *list_filter(bool (*func)(Value *item), Value *list) {
+Value *list_filter(GC *gc, bool (*func)(Value *item), Value *list) {
 
 }
