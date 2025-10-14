@@ -4,4 +4,6 @@
 #include "closure.h"
 #include "gc.h"
 
-Value *evaluate(GC *gc, Closure *closure, Value *expr);
+Value *eval_s_expr(GC *gc, Closure *closure, Value *expr);
+
+Value *eval(GC *gc, Closure *closure, char *lyra);

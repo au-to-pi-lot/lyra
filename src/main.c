@@ -51,7 +51,7 @@ void repl(GC *gc, Closure *global) {
             continue;
         }
 
-        Value *result = evaluate(gc, global, ast);
+        Value *result = eval_s_expr(gc, global, ast);
         if (result == NULL) {
             printf("Evaluation error\n");
             continue;
@@ -92,7 +92,7 @@ void run_file(GC *gc, Closure *global, const char *filename) {
         exit(1);
     }
 
-    Value *result = evaluate(gc, global, ast);
+    Value *result = eval_s_expr(gc, global, ast);
     if (result == NULL) {
         fprintf(stderr, "Evaluation error in file '%s'\n", filename);
         free(string);

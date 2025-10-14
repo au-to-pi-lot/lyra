@@ -21,7 +21,7 @@ Value *call_derived_function(GC *gc, Derived callable, Value *args) {
     Value *result = NIL;
     Value *body = callable.definition;
     while (!is_nil(body)) {
-        result = evaluate(gc, new_closure, list_head(body));
+        result = eval_s_expr(gc, new_closure, list_head(body));
         body = list_tail(body);
     }
 
@@ -44,12 +44,12 @@ Value *call_derived_macro(GC *gc, Closure *closure, Derived callable, Value *arg
     Value *expansion = NIL;
     Value *body = callable.definition;
     while (!is_nil(body)) {
-        expansion = evaluate(gc, new_closure, list_head(body));
+        expansion = eval_s_expr(gc, new_closure, list_head(body));
         body = list_tail(body);
     }
     
     // Evaluate expansion in CALLER'S closure
-    return evaluate(gc, closure, expansion);
+    return eval_s_expr(gc, closure, expansion);
 }
 
 Value *call_intrinsic(GC *gc, Closure *closure, Intrinsic callable, Value *args) {

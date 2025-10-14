@@ -31,7 +31,7 @@ Value *intrinsic_if(GC *gc, Closure *closure, Value *args) {
     // args->cdr->car = then-expr
     // args->cdr->cdr->car = else-expr (optional)
 
-    Value *condition = evaluate(gc, closure, list_head(args));
+    Value *condition = eval_s_expr(gc, closure, list_head(args));
 
     // Determine falsiness: NULL, false boolean, 0, or nil
     int is_false = (condition == NULL) ||
@@ -41,10 +41,10 @@ Value *intrinsic_if(GC *gc, Closure *closure, Value *args) {
 
     if (!is_false) {
         // Evaluate then branch
-        return evaluate(gc, closure, list_index(args, 1));
+        return eval_s_expr(gc, closure, list_index(args, 1));
     } else if (list_index(args, 2)) {
         // Evaluate else branch if it exists
-        return evaluate(gc, closure, list_index(args, 2));
+        return eval_s_expr(gc, closure, list_index(args, 2));
     } else {
         // No else branch, return nil
         return NIL;
@@ -57,7 +57,17 @@ Value *intrinsic_define(GC *gc, Closure *closure, Value *args) {
     // args->cdr->car = value expression (to be evaluated)
 
     UT_string *name = list_head(args)->data.as_symbol;
-    Value *value = evaluate(gc, closure, list_index(args, 1));
+    Value *value = eval_s_expr(gc, closure, list_index(args, 1));
+
+    set_var(gc, closure, name, value);
+
+    // Return the defined value
+    return value;
+}
+
+Value *intrinsic_define_macro(GC *gc, Closure *closure, Value *args) {
+    UT_string *name = list_head(args)->data.as_symbol;
+    Value *value = eval_s_expr(gc, closure, list_index(args, 1));
 
     set_var(gc, closure, name, value);
 

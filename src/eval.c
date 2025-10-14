@@ -2,6 +2,7 @@
 #include "call.h"
 #include "types/list.h"
 #include <stdio.h>
+#include "parse.h"
 
 Value *eval_args(GC *gc, Closure *closure, Value *args) {
     // If the args are nil, nothing to do
@@ -19,7 +20,7 @@ Value *eval_args(GC *gc, Closure *closure, Value *args) {
         Value *next = gc_alloc_value(gc, CONS, (ValueData){.as_cons = cons});
 
         // Eval item
-        cons->car = evaluate(gc, closure, item);
+        cons->car = eval_s_expr(gc, closure, item);
 
         // Add cons to end of result list
         if (result == NULL) {
@@ -36,7 +37,7 @@ Value *eval_args(GC *gc, Closure *closure, Value *args) {
     return result;
 }
 
-Value *evaluate(GC *gc, Closure *closure, Value *expr) {
+Value *eval_s_expr(GC *gc, Closure *closure, Value *expr) {
     switch (expr->type) {
         case CONS:
             Value *head = list_head(expr);
@@ -62,7 +63,7 @@ Value *evaluate(GC *gc, Closure *closure, Value *expr) {
                     // TODO
                 }
             } else if (head->type == CONS) {
-                Value *value = evaluate(gc, closure, head);
+                Value *value = eval_s_expr(gc, closure, head);
                 if (value == NULL) {
                     printf("Cannot eval subexpression");
                     return NULL;
@@ -88,4 +89,10 @@ Value *evaluate(GC *gc, Closure *closure, Value *expr) {
         default:
             return expr;
     }
+}
+
+Value *eval(GC *gc, Closure *closure, char *lyra) {
+    Value *s_expr = parse(gc, lyra);
+    Value *value = eval_s_expr(gc, closure, s_expr);
+    return value;
 }

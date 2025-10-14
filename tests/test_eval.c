@@ -12,7 +12,7 @@
 static Value* eval_string(GC *gc, Closure *closure, const char *input) {
     Value *parsed = parse(gc, input);
     if (!parsed) return NULL;
-    return evaluate(gc, closure, parsed);
+    return eval_s_expr(gc, closure, parsed);
 }
 
 START_TEST(test_eval_integer)
@@ -314,11 +314,101 @@ START_TEST(test_eval_z_combinator_factorial)
         "             1 "
         "             (* n (self (- n 1))))))))");
 
-    // Test factorial(1) = 1 (simpler test)
-    Value *result = eval_string(&gc, closure, "(factorial 1)");
+    // Test factorial(5) = 120
+    Value *result = eval_string(&gc, closure, "(factorial 5)");
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
-    ck_assert_int_eq(result->data.as_int, 1);
+    ck_assert_int_eq(result->data.as_int, 120);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_eval_quasiquote_simple)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // Quasiquote without unquote is like quote
+    Value *result = eval_string(&gc, closure, "`(1 2 3)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, CONS);
+    ck_assert_int_eq(list_length(result), 3);
+    ck_assert_int_eq(list_index(result, 0)->data.as_int, 1);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_eval_quasiquote_with_unquote)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define x 42)");
+
+    // Unquote evaluates the expression
+    Value *result = eval_string(&gc, closure, "`(1 ,x 3)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, CONS);
+    ck_assert_int_eq(list_length(result), 3);
+    ck_assert_int_eq(list_index(result, 0)->data.as_int, 1);
+    ck_assert_int_eq(list_index(result, 1)->data.as_int, 42);
+    ck_assert_int_eq(list_index(result, 2)->data.as_int, 3);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_eval_quasiquote_nested)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define x 10)");
+
+    // Nested lists with unquote
+    Value *result = eval_string(&gc, closure, "`(+ ,x (+ 1 2))");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(list_length(result), 3);
+
+    // First element is symbol +
+    ck_assert_int_eq(list_index(result, 0)->type, SYMBOL);
+    // Second element is 10 (unquoted x)
+    ck_assert_int_eq(list_index(result, 1)->data.as_int, 10);
+    // Third element is unevaluated list (+ 1 2)
+    Value *third = list_index(result, 2);
+    ck_assert_int_eq(third->type, CONS);
+    ck_assert_int_eq(list_length(third), 3);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_eval_unquote_splicing)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define xs (quote (2 3 4)))");
+
+    // Unquote-splicing splices a list into the template
+    Value *result = eval_string(&gc, closure, "`(1 ,@xs 5)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(list_length(result), 5);
+    ck_assert_int_eq(list_index(result, 0)->data.as_int, 1);
+    ck_assert_int_eq(list_index(result, 1)->data.as_int, 2);
+    ck_assert_int_eq(list_index(result, 2)->data.as_int, 3);
+    ck_assert_int_eq(list_index(result, 3)->data.as_int, 4);
+    ck_assert_int_eq(list_index(result, 4)->data.as_int, 5);
 
     gc_free_all(&gc);
 }
@@ -350,6 +440,10 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_eval_lambda_with_arithmetic);
     tcase_add_test(tc_core, test_eval_closure);
     tcase_add_test(tc_core, test_eval_z_combinator_factorial);
+    tcase_add_test(tc_core, test_eval_quasiquote_simple);
+    tcase_add_test(tc_core, test_eval_quasiquote_with_unquote);
+    tcase_add_test(tc_core, test_eval_quasiquote_nested);
+    tcase_add_test(tc_core, test_eval_unquote_splicing);
 
     suite_add_tcase(s, tc_core);
 

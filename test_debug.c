@@ -18,7 +18,7 @@ int main() {
     printf("Parse successful\n");
 
     printf("Evaluating: (define x 42)\n");
-    Value *result1 = evaluate(closure, parsed1);
+    Value *result1 = eval_s_expr(closure, parsed1);
     if (!result1) {
         printf("Eval failed\n");
         return 1;
@@ -34,7 +34,7 @@ int main() {
     printf("Parse successful, type: %d\n", parsed2->type);
 
     printf("Evaluating: x\n");
-    Value *result2 = evaluate(closure, parsed2);
+    Value *result2 = eval_s_expr(closure, parsed2);
     if (!result2) {
         printf("Eval failed - variable not found\n");
         return 1;

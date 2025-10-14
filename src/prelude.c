@@ -5,6 +5,7 @@
 #include "types/list.h"
 #include "types/macro.h"
 #include "types/function.h"
+#include "eval.h"
 
 void define_intrinsic_value(GC *gc, Closure *closure, char *key, Value *value) {
     UT_string *ut_key = gc_alloc_string(gc);
@@ -38,4 +39,10 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function(gc, closure, "/", &intrinsic_div);
     define_intrinsic_function(gc, closure, "divmod", &intrinsic_divmod);
     define_intrinsic_function(gc, closure, "=", &intrinsic_eq);
+
+    eval(gc, closure, 
+        "(define Z (lambda (f) "
+        "  ((lambda (x) (f (lambda (v) ((x x) v)))) "
+        "   (lambda (x) (f (lambda (v) ((x x) v)))))))"
+    );
 }
