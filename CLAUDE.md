@@ -47,5 +47,8 @@ The makefile automatically picks up **all** `.c` files in `src/` using `find`. Y
 - Closures use uthash for variable storage
 - Callables can be intrinsic (C functions) or derived (user-defined Lisp functions/macros)
 
-### Known Issues
-- **Z Combinator / Recursion**: The Z combinator test currently fails. `(factorial 1)` returns a function instead of evaluating to `1`. This suggests the Z combinator application isn't working correctly - likely an issue with how lambda application or evaluation works. Need to debug why the recursive call isn't being made properly.
+### Recursion
+- **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
+  - Fixed GC bugs that were incorrectly freeing live values in closures
+  - The Z combinator creates complex closure references, making it a good stress test for the GC
+  - Example: `(define factorial (Z (lambda (self) (lambda (n) (if (= n 0) 1 (* n (self (- n 1))))))))` works correctly
