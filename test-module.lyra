@@ -1,0 +1,2 @@
+(define test-value 42)
+(define square (lambda (x) (* x x)))

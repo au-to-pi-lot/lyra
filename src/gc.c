@@ -11,6 +11,7 @@ void gc_init(GC *gc) {
     gc->head = NULL;
     gc->num_objects = 0;
     gc->max_objects = GC_INITIAL_THRESHOLD;
+    gc->gensym_counter = 0;
 }
 
 // Internal helper: register an object with the GC

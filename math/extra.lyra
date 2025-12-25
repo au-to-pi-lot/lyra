@@ -1,0 +1,5 @@
+(module math
+  (export cube half)
+
+  (define cube (lambda (x) (* x x x)))
+  (define half (lambda (x) (/ x 2))))

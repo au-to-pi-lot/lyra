@@ -180,6 +180,38 @@ static Token next_token(Lexer* lex) {
         return lex_number(lex);
     }
 
+    if (c == '\'') {
+        advance(lex);
+        UT_string *data;
+        utstring_new(data);
+        utstring_printf(data, "'");
+        return make_token(TOKEN_QUOTE, data, line, col);
+    }
+
+    if (c == '`') {
+        advance(lex);
+        UT_string *data;
+        utstring_new(data);
+        utstring_printf(data, "`");
+        return make_token(TOKEN_QUASIQUOTE_BACKTICK, data, line, col);
+    }
+
+    if (c == ',') {
+        advance(lex);
+        int token_type = TOKEN_UNQUOTE_COMMA;
+        UT_string *data;
+        utstring_new(data);
+        utstring_printf(data, ",");
+
+        if (peek(lex) == '@') {
+            advance(lex);
+            token_type = TOKEN_UNQUOTE_SPLICING_COMMA_AT;
+            utstring_printf(data, "@");
+        }
+
+        return make_token(token_type, data, line, col);
+    }
+
     // Otherwise it's a symbol
     return lex_symbol(lex);
 }
@@ -247,17 +279,62 @@ static Value* parse_list(GC *gc, Lexer* lex) {
             return NULL;
         }
 
-        result = list_append(gc, elem, result);
+        list_push(gc, elem, &result);
     }
 
     return list_reverse(gc, result);
 }
 
 // Parse a single expression
-static Value* parse_expr(GC *gc, Lexer* lex, Token* current) {
+static Value* parse_expr(GC *gc, Lexer *lex, Token *current) {
     if (current->type == TOKEN_LPAREN) {
         free_token(current);
         return parse_list(gc, lex);
+
+    } else if (current->type == TOKEN_QUOTE) {
+        Token next = next_token(lex);
+        Value *expr = parse_expr(gc, lex, &next);
+        Value *symbol = symbol_from_char(gc, "quote");
+        // Build list (quote expr) by pushing in reverse order
+        Value *result = NIL;
+        list_push(gc, expr, &result);
+        list_push(gc, symbol, &result);
+        free_token(current);
+        return result;
+
+    } else if (current->type == TOKEN_QUASIQUOTE_BACKTICK) {
+        Token next = next_token(lex);
+        Value *expr = parse_expr(gc, lex, &next);
+        Value *symbol = symbol_from_char(gc, "quasiquote");
+        // Build list (quasiquote expr) by pushing in reverse order
+        Value *result = NIL;
+        list_push(gc, expr, &result);
+        list_push(gc, symbol, &result);
+        free_token(current);
+        return result;
+
+    } else if (current->type == TOKEN_UNQUOTE_COMMA) {
+        Token next = next_token(lex);
+        Value *expr = parse_expr(gc, lex, &next);
+        Value *symbol = symbol_from_char(gc, "unquote");
+        // Build list (unquote expr) by pushing in reverse order
+        Value *result = NIL;
+        list_push(gc, expr, &result);
+        list_push(gc, symbol, &result);
+        free_token(current);
+        return result;
+
+    } else if (current->type == TOKEN_UNQUOTE_SPLICING_COMMA_AT) {
+        Token next = next_token(lex);
+        Value *expr = parse_expr(gc, lex, &next);
+        Value *symbol = symbol_from_char(gc, "unquote-splicing");
+        // Build list (unquote-splicing expr) by pushing in reverse order
+        Value *result = NIL;
+        list_push(gc, expr, &result);
+        list_push(gc, symbol, &result);
+        free_token(current);
+        return result;
+
     } else {
         Value* val = parse_atom(gc, current);
         free_token(current);
@@ -265,20 +342,28 @@ static Value* parse_expr(GC *gc, Lexer* lex, Token* current) {
     }
 }
 
-// Main parse function
-Value* parse(GC *gc, const char* input) {
+// Main parse function with position tracking
+Value* parse_with_pos(GC *gc, const char *input, size_t *consumed) {
     Lexer lex = make_lexer(input);
     Token tok = next_token(&lex);
 
     if (tok.type == TOKEN_EOF) {
         free_token(&tok);
+        if (consumed) *consumed = lex.pos;
         return NULL;
     }
 
-    return parse_expr(gc, &lex, &tok);
+    Value *result = parse_expr(gc, &lex, &tok);
+    if (consumed) *consumed = lex.pos;
+    return result;
+}
+
+// Main parse function (backward compatibility)
+Value* parse(GC *gc, const char *input) {
+    return parse_with_pos(gc, input, NULL);
 }
 
 // Parse from UT_string
-Value* parse_utstring(GC *gc, UT_string* str) {
+Value* parse_utstring(GC *gc, UT_string *str) {
     return parse(gc, utstring_body(str));
 }

@@ -79,6 +79,9 @@ static UT_string *repr_internal(Value *val, UT_string *out) {
         case MACRO:
             utstring_printf(out, "<<macro 0x%lx>>", (uintptr_t)val->data.as_function);
             break;
+        case VARIADIC_MARKER:
+            utstring_printf(out, "*%s", utstring_body(val->data.as_symbol));
+            break;
         default:
             break;
     }

@@ -62,10 +62,24 @@ Value *list_head(Value *list) {
 
 Value *list_tail(Value *list) {
     if (is_nil(list)) {
-        return list;
+        return NIL;
     }
 
     return list->data.as_cons->cdr;
+}
+
+Value *list_pop(Value **list) {
+    if (is_nil(*list)) {
+        return NIL;
+    }
+
+    Value *first = (*list)->data.as_cons->car;
+    *list = (*list)->data.as_cons->cdr;
+    return first;
+}
+
+void list_push(GC *gc, Value *item, Value **list) {
+    *list = list_append(gc, item, *list);
 }
 
 Value *list_drop(Value *list, int n) {

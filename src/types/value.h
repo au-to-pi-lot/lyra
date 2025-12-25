@@ -20,7 +20,8 @@ typedef enum ValueType {
     STRING,
     SYMBOL,
     FUNCTION,
-    MACRO
+    MACRO,
+    VARIADIC_MARKER  // Internal marker for variadic parameters (*name)
 } ValueType;
 
 typedef enum CallableType{
@@ -54,6 +55,7 @@ typedef struct GC {
     GCObject *head;
     size_t num_objects;
     size_t max_objects;  // trigger GC when we hit this
+    size_t gensym_counter;  // for generating unique symbols
 } GC;
 
 /// @struct Cons
@@ -110,6 +112,7 @@ struct Derived {
 /// @brief Discriminated union over CallableType.
 struct Callable {
     CallableType type;
+    bool is_pure;  // True = pure (no side effects), False = impure
     union {
         Intrinsic as_intrinsic;
         Derived as_derived;

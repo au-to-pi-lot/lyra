@@ -10,6 +10,7 @@
 #include "repr.h"
 #include "prelude.h"
 #include "gc.h"
+#include "types/list.h"
 
 static char *prompt(EditLine *el) {
     (void)el;
@@ -85,20 +86,44 @@ void run_file(GC *gc, Closure *global, const char *filename) {
 
     string[fsize] = 0;
 
-    Value *ast = parse(gc, string);
-    if (ast == NULL) {
-        fprintf(stderr, "Parse error in file '%s'\n", filename);
-        free(string);
-        exit(1);
+    // Parse and evaluate all expressions in the file
+    const char *input = string;
+    Value *result = NIL;
+
+    while (*input != '\0') {
+        size_t consumed = 0;
+        Value *ast = parse_with_pos(gc, input, &consumed);
+
+        if (ast == NULL) {
+            // Check if we've reached the end (only whitespace/comments left)
+            int only_whitespace = 1;
+            for (const char *p = input; *p != '\0'; p++) {
+                if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+                    only_whitespace = 0;
+                    break;
+                }
+            }
+
+            if (only_whitespace) {
+                break;
+            }
+
+            fprintf(stderr, "Parse error in file '%s'\n", filename);
+            free(string);
+            exit(1);
+        }
+
+        result = eval_s_expr(gc, global, ast);
+        if (result == NULL) {
+            fprintf(stderr, "Evaluation error in file '%s'\n", filename);
+            free(string);
+            exit(1);
+        }
+
+        input += consumed;
     }
 
-    Value *result = eval_s_expr(gc, global, ast);
-    if (result == NULL) {
-        fprintf(stderr, "Evaluation error in file '%s'\n", filename);
-        free(string);
-        exit(1);
-    }
-
+    // Print only the final result
     printf("%s\n", utstring_body(repr(gc, result)));
     free(string);
 
@@ -106,18 +131,84 @@ void run_file(GC *gc, Closure *global, const char *filename) {
     gc_collect(gc, global);
 }
 
+void print_help(const char *program_name) {
+    printf("Usage: %s [options] [file]\n", program_name);
+    printf("\n");
+    printf("Options:\n");
+    printf("  -c CODE    Execute CODE and exit\n");
+    printf("  -h         Show this help message\n");
+    printf("\n");
+    printf("If no options are provided:\n");
+    printf("  %s         Start interactive REPL\n", program_name);
+    printf("  %s FILE    Execute FILE and exit\n", program_name);
+    printf("\n");
+}
+
+void run_command(GC *gc, Closure *global, const char *code) {
+    // Parse and evaluate all expressions in the code string
+    const char *input = code;
+    Value *result = NIL;
+
+    while (*input != '\0') {
+        size_t consumed = 0;
+        Value *ast = parse_with_pos(gc, input, &consumed);
+
+        if (ast == NULL) {
+            // Check if we've reached the end (only whitespace left)
+            int only_whitespace = 1;
+            for (const char *p = input; *p != '\0'; p++) {
+                if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+                    only_whitespace = 0;
+                    break;
+                }
+            }
+
+            if (only_whitespace) {
+                break;
+            }
+
+            fprintf(stderr, "Parse error\n");
+            exit(1);
+        }
+
+        result = eval_s_expr(gc, global, ast);
+        if (result == NULL) {
+            fprintf(stderr, "Evaluation error\n");
+            exit(1);
+        }
+
+        input += consumed;
+    }
+
+    // Print only the final result
+    printf("%s\n", utstring_body(repr(gc, result)));
+
+    // Run garbage collection after command evaluation
+    gc_collect(gc, global);
+}
+
 int main(int argc, char **argv) {
+    // Handle help flag before initializing GC
+    if (argc >= 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+        print_help(argv[0]);
+        return 0;
+    }
+
     GC gc;
     gc_init(&gc);
     Closure *global = make_closure(&gc, NULL);
     prelude(&gc, global);
 
-    if (argc < 2) {
-        // No arguments: enter REPL mode
-        repl(&gc, global);
-    } else {
-        // File mode
+    // Parse command-line arguments
+    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
+        // Command mode: lyra -c "code"
+        run_command(&gc, global, argv[2]);
+    } else if (argc >= 2) {
+        // File mode: lyra file.lisp
         run_file(&gc, global, argv[1]);
+    } else {
+        // REPL mode: lyra
+        repl(&gc, global);
     }
 
     // Clean up all GC-managed memory before exit

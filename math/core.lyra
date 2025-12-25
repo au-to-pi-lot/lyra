@@ -1,0 +1,5 @@
+(module math
+  (export square double)
+
+  (define square (lambda (x) (* x x)))
+  (define double (lambda (x) (+ x x))))

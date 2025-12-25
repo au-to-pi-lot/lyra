@@ -375,8 +375,8 @@ Inspired by C# namespaces to avoid Python's circular import problems.
   (export foo bar)
   (import otherlib [baz quux])
 
-  (defn foo [x] ...)
-  (defn bar [y] ...))
+  (fn foo [x] ...)
+  (fn bar [y] ...))
 ```
 
 **Two-Pass Evaluation:**
@@ -469,11 +469,11 @@ Pattern matching:
 Functions work over any type:
 ```scheme
 ; Implicit generics
-(defn identity [x] x)
-(defn first [[x & rest]] x)
+(fn identity [x] x)
+(fn first [[x *rest]] x)
 
 ; Explicit type parameters (when needed)
-(defn make-pair [T U] [a : T b : U] -> (Pair T U)
+(fn make-pair [T U] [a : T b : U] -> (Pair T U)
   (Pair a b))
 ```
 

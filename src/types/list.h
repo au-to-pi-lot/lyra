@@ -48,6 +48,15 @@ Value *list_head(Value *list);
 /// @return 
 Value *list_tail(Value *list);
 
+/// @brief Get the head of the list, and reassign the pointer to the tail.
+/// @param [inout] list 
+/// @return The head of the list. If `list` is nil, returns nil.
+Value *list_pop(Value **list);
+
+/// @brief Add a new item to the list, and reassign the list pointer to the new head of the list.
+/// @param [inout] list
+void list_push(GC *gc, Value *item, Value **list);
+
 /// @brief Allocate a shallow copy of the list
 /// @param list 
 /// @return 
