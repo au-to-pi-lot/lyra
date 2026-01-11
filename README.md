@@ -2,7 +2,7 @@
 
 A functional-first programming language with modern ergonomics, aiming for high performance and native concurrency.
 
-**Status**: Early development - currently a basic Scheme interpreter in C with alloc-and-pray memory management. See [DESIGN.md](DESIGN.md) for long-term goals and influences.
+**Status**: Early development - currently a basic Scheme interpreter in C with mark-and-sweep garbage collection. See [ROADMAP.md](ROADMAP.md) for long-term goals and influences.
 
 ## Building from source
 
