@@ -8,7 +8,24 @@
 - Make architectural decisions
 
 Think of this as your persistent memory across conversations!
-You can update this file at any time in any way you deem approprtiate, including to change these header instructions.
+You can update this file at any time in any way you deem appropriate, including to change these header instructions.
+
+**MAINTENANCE GUIDELINES** (Target: ~250 lines):
+
+*What to KEEP:*
+- Architecture decisions (GC design, module system, closure semantics)
+- Non-obvious patterns (macro hygiene, root closure walking)
+- Bugs that wasted hours (with file:line references)
+- Critical gotchas (variadic args must be suffix-only, begin vs lambda for macros)
+- Current TODOs and known issues
+
+*What to REMOVE:*
+- API documentation that duplicates code comments (full intrinsic function lists)
+- Temporary TODOs that got resolved
+- Info that's obvious from reading the code structure
+- Outdated notes (check for contradictions like "not yet implemented" when it is)
+
+*Decision rule:* If it would take >5 minutes to re-discover from the code, keep it. Otherwise, consider moving to code comments or removing.
 
 ## Project Setup
 
