@@ -3,8 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <histedit.h>
+#include <replxx.h>
 #include "eval.h"
 #include "parser.h"
 #include "repr.h"
@@ -12,39 +11,31 @@
 #include "gc.h"
 #include "types/list.h"
 
-static char *prompt(EditLine *el) {
-    (void)el;
-    return "> ";
-}
+#ifdef _WIN32
+#include <io.h>
+#define isatty _isatty
+#define STDIN_FILENO _fileno(stdin)
+#else
+#include <unistd.h>
+#endif
 
 void repl(GC *gc, Closure *global) {
-    EditLine *el;
-    History *hist;
-    HistEvent ev;
-    const char *line;
-    int num;
     int is_tty = isatty(STDIN_FILENO);
 
-    // Initialize editline
-    el = el_init("lyra", stdin, stdout, stderr);
-    el_set(el, EL_PROMPT, &prompt);
-    el_set(el, EL_EDITOR, "emacs");
-
-    // Initialize history
-    hist = history_init();
-    history(hist, &ev, H_SETSIZE, 800);
-    el_set(el, EL_HIST, history, hist);
+    Replxx *replxx = replxx_init();
+    replxx_set_max_history_size(replxx, 800);
 
     if (is_tty) {
         printf("Welcome to Lyra REPL. Press Ctrl+D to exit.\n");
     }
 
-    while ((line = el_gets(el, &num)) != NULL && num > 0) {
+    const char *line;
+    while ((line = replxx_input(replxx, "> ")) != NULL) {
         // Skip empty lines
-        if (num <= 1) continue;
+        if (line[0] == '\0') continue;
 
         // Add to history
-        history(hist, &ev, H_ENTER, line);
+        replxx_history_add(replxx, line);
 
         Value *ast = parse(gc, line);
         if (ast == NULL) {
@@ -65,8 +56,7 @@ void repl(GC *gc, Closure *global) {
     }
 
     printf("\n");
-    history_end(hist);
-    el_end(el);
+    replxx_end(replxx);
 }
 
 void run_file(GC *gc, Closure *global, const char *filename) {

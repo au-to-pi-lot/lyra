@@ -1,4 +1,6 @@
 /.vscode/
+/.idea/
 /vcpkg_installed/
 /build/
+/build-*/
 /lyra

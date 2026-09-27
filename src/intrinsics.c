@@ -15,8 +15,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <dirent.h>
-#include <sys/stat.h>
+#include "platform_dir.h"
 
 // Enable debug output with -DDEBUG_LAMBDA
 #ifdef DEBUG_LAMBDA
@@ -1030,29 +1029,21 @@ Value *intrinsic_list_directory(GC *gc, Closure *closure, Value *args) {
 
     const char *path = utstring_body(path_val->data.as_string);
 
-    DIR *dir = opendir(path);
-    if (!dir) {
+    char **entries = platform_list_directory(path);
+    if (!entries) {
         printf("list-directory: could not open directory '%s'\n", path);
         return NIL;
     }
 
     Value *result = NIL;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        // Skip . and ..
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-
-        // Create string for filename
+    for (char **entry = entries; *entry != NULL; entry++) {
         UT_string *filename = gc_alloc_string(gc);
-        utstring_printf(filename, "%s", entry->d_name);
+        utstring_printf(filename, "%s", *entry);
         Value *filename_val = make_string(gc, filename);
 
         list_push(gc, filename_val, &result);
     }
-
-    closedir(dir);
+    platform_free_directory_listing(entries);
 
     return list_reverse(gc, result);
 }

@@ -4,6 +4,6 @@
   "dependencies": [
     "uthash",
     "check",
-    "libedit"
+    "replxx"
   ]
 }
