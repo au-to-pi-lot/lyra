@@ -4,3 +4,14 @@
 /build/
 /build-*/
 /lyra
+
+# In case of an accidental in-source CMake configure (CMakeLists.txt now
+# refuses these, but the cache files land before that check runs).
+/CMakeCache.txt
+/CMakeFiles/
+/CTestTestfile.cmake
+/cmake_install.cmake
+/*.vcxproj
+/*.vcxproj.filters
+/*.sln
+/*.dir/

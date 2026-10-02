@@ -14,6 +14,8 @@ This file is loaded into every session's context, so it stays intentionally shor
 ### Build system auto-discovers sources
 Both the Makefile (`find`-based) and `CMakeLists.txt` (`GLOB ... CONFIGURE_DEPENDS`-based) pick up every `.c` file under `src/` automatically. Just create the file — there's no list to edit.
 
+Always configure CMake out-of-source (`cmake -S . -B build`), never `cmake .` from the repo root — `CMakeLists.txt` has a guard that fails fast if you forget, but CMake still drops a stray `CMakeCache.txt`/`CMakeFiles/` before that guard runs, so clean those up if it happens.
+
 ### Memory management boundary
 Everything reachable from a `Value*` is GC-managed (`src/gc.c`) — never call `free()` on it yourself. The parser is the deliberate exception: it uses plain manual allocation (`make_token`/`free_token`) since tokens never outlive parsing.
 

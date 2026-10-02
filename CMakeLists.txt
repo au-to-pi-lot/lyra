@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR
+        "In-source builds are not allowed. Remove CMakeCache.txt and CMakeFiles/ "
+        "from the repo root, then configure into a separate directory instead, e.g.:\n"
+        "  cmake -S . -B build")
+endif()
+
 # Must be set before project() to take effect.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
