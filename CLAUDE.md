@@ -9,6 +9,17 @@ This file is loaded into every session's context, so it stays intentionally shor
 
 **Keep this file lean.** Before adding something here, ask: is this an abstract pattern to follow when writing *new* code, or a fact about what's already been built? The former belongs here; the latter belongs in ARCHITECTURE.md.
 
+## How We Work: Coordinator and Subagents
+
+The main session acts as a **coordinator**: it delegates code changes to `implementer` subagents (`.claude/agents/implementer.md`), which work in parallel in isolated worktrees and deliver PRs against `main` for Ysanne to review. Subagents never commit to `main`.
+
+- **Ysanne's taste drives design.** Any subagent question about semantics, syntax, user-visible behavior, or a real design choice goes to Ysanne — relay it with its context; never answer it on Ysanne's behalf. Internal implementation details the subagent decides itself and lists as "judgment calls" in the PR.
+- **Disagreement surfaces.** If a subagent thinks a task is wrong, it stops before implementing and the coordinator relays its reasoning.
+- **No news is good news.** Don't report progress while subagents are running. Report when a task completes (PR link + short summary) or when it needs Ysanne (questions, disagreement, blocker).
+- **Resume, don't restart.** After Ysanne answers, continue the same subagent with `SendMessage` so it keeps its context.
+- **Prompt as you'd wish to be prompted.** A subagent starts cold; the task prompt is everything it knows. Write it like a briefing to a capable colleague, not a ticket: the goal and *why* it matters, relevant prior decisions (including Ysanne's answers to earlier questions), what you already know about where the code lives, known pitfalls, and what's explicitly out of scope. Don't over-script the how — leave room for judgment and pushback.
+- **Match the model to the task.** Rough guide, not law: **Opus** for open-ended work (design-adjacent changes, unclear scope, debugging without a known cause); **Sonnet** for well-scoped tasks with verifiable success (tests define done); **Haiku** for rote work and data processing (mechanical renames, bulk edits, summarizing output). When unsure, go up a tier — a botched run costs more than the difference.
+
 ## Patterns to Follow
 
 ### Build system auto-discovers sources

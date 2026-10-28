@@ -15,3 +15,6 @@
 /*.vcxproj.filters
 /*.sln
 /*.dir/
+
+# Claude Code subagent worktrees
+/.claude/worktrees/
