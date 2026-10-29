@@ -4,6 +4,7 @@
 #include "types/list.h"
 #include "gc.h"
 #include "repr.h"
+#include "panic.h"
 
 // Enable debug output with -DDEBUG_MACRO
 #ifdef DEBUG_MACRO
@@ -176,7 +177,6 @@ Value *call(GC *gc, Closure *closure, Callable *callable, Value *args) {
         case INTRINSIC_MACRO:
             return call_intrinsic(gc, closure, callable->data.as_intrinsic, args);
         default:
-            printf("Unknown callable type: %d", callable->type);
-            return NIL;
+            lyra_panic("internal error: unknown callable type %d", callable->type);
     }
 }

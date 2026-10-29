@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "platform_dir.h"
+#include "panic.h"
 
 // Enable debug output with -DDEBUG_LAMBDA
 #ifdef DEBUG_LAMBDA
@@ -42,23 +43,20 @@ Value *process_params(GC *gc, Value *params) {
     for (Value *p = params; !is_nil(p); p = list_tail(p)) {
         // Defensive check: p must be a cons to call list_head
         if (p->type != CONS) {
-            printf("Error: improper parameter list (expected cons, got type=%d)\n", p->type);
-            return NIL;
+            lyra_panic("improper parameter list: %s", utstring_body(repr(gc, params)));
         }
 
         Value *param = list_head(p);
 
         // Check for null/invalid param
         if (param == NULL) {
-            printf("Error: null parameter in list\n");
-            return NIL;
+            lyra_panic("internal error: null parameter in parameter list");
         }
 
         if (param->type == CONS && !is_nil(param)) {
             // Destructuring pattern - process and add to params
             if (seen_variadic) {
-                printf("Error: no parameters allowed after variadic parameter\n");
-                return NIL;
+                lyra_panic("no parameters allowed after variadic parameter");
             }
             // Recursively process the destructuring pattern
             Value *processed_pattern = process_params(gc, param);
@@ -72,8 +70,7 @@ Value *process_params(GC *gc, Value *params) {
             if (name[0] == '*' && name[1] != '\0') {
                 // Variadic parameter must be last (suffix only)
                 if (!is_nil(list_tail(p))) {
-                    printf("Error: variadic parameter *%s must be the last parameter\n", name + 1);
-                    return NIL;
+                    lyra_panic("variadic parameter *%s must be the last parameter", name + 1);
                 }
 
                 // Create variadic marker with the name (without *)
@@ -85,14 +82,12 @@ Value *process_params(GC *gc, Value *params) {
                 seen_variadic = true;
             } else {
                 if (seen_variadic) {
-                    printf("Error: no parameters allowed after variadic parameter\n");
-                    return NIL;
+                    lyra_panic("no parameters allowed after variadic parameter");
                 }
                 list_push(gc, param, &processed_params);
             }
         } else {
-            printf("Error: invalid parameter (type=%d) %s\n", param->type, utstring_body(repr(gc, param)));
-            return NIL;
+            lyra_panic("invalid parameter: %s", utstring_body(repr(gc, param)));
         }
     }
 
@@ -182,8 +177,7 @@ Value *intrinsic_define_macro(GC *gc, Closure *closure, Value *args) {
     }
 
     if (!macro_value) {
-        printf("define-macro requires a function\n");
-        return NIL;
+        lyra_panic("define-macro requires a function");
     }
 
     set_var(gc, closure, name, macro_value);
@@ -227,8 +221,7 @@ Value *intrinsic_or(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_not(GC *gc, Closure *closure, Value *args) {
     int length = list_length(args);
     if (length != 1) {
-        printf("boolean not expects exactly one argument, but got %d", length);
-        return NIL;
+        lyra_panic("not expects exactly one argument, but got %d", length);
     }
     Value *arg = list_head(args);
     Value *value = eval_s_expr(gc, closure, arg);
@@ -573,16 +566,14 @@ Value *intrinsic_gensym(GC *gc, Closure *closure, Value *args) {
 // on the macro being expanded; we conservatively call it impure.
 Value *intrinsic_expand_macro_1(GC *gc, Closure *closure, Value *args) {
     if (list_length(args) != 1) {
-        printf("expand-macro-1 requires exactly one argument (a quoted form)\n");
-        return NIL;
+        lyra_panic("expand-macro-1 requires exactly one argument (a quoted form)");
     }
     return macroexpand_1(gc, closure, list_head(args), NULL);
 }
 
 Value *intrinsic_expand_macro(GC *gc, Closure *closure, Value *args) {
     if (list_length(args) != 1) {
-        printf("expand-macro requires exactly one argument (a quoted form)\n");
-        return NIL;
+        lyra_panic("expand-macro requires exactly one argument (a quoted form)");
     }
     return macroexpand(gc, closure, list_head(args), NULL);
 }
@@ -664,14 +655,12 @@ Value *intrinsic_load_file(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     // (load-file "path.lisp")
     if (list_length(args) < 1) {
-        printf("load-file requires a filename argument\n");
-        return NIL;
+        lyra_panic("load-file requires a filename argument");
     }
 
     Value *filename_val = list_index(args, 0);
     if (filename_val->type != STRING) {
-        printf("load-file requires a string filename\n");
-        return NIL;
+        lyra_panic("load-file requires a string filename");
     }
 
     const char *filename = utstring_body(filename_val->data.as_string);
@@ -679,6 +668,7 @@ Value *intrinsic_load_file(GC *gc, Closure *closure, Value *args) {
     // Open the file
     FILE *file = fopen(filename, "r");
     if (!file) {
+        // TODO: result
         printf("load-file: could not open file '%s'\n", filename);
         return NIL;
     }
@@ -692,6 +682,7 @@ Value *intrinsic_load_file(GC *gc, Closure *closure, Value *args) {
     char *buffer = malloc(file_size + 1);
     if (!buffer) {
         fclose(file);
+        // TODO: result (or panic? out-of-memory is arguably unrecoverable)
         printf("load-file: memory allocation failed\n");
         return NIL;
     }
@@ -711,14 +702,12 @@ Value *intrinsic_load_file(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args) {
     // (eval-string "code")
     if (list_length(args) < 1) {
-        printf("eval-string requires a string argument\n");
-        return NIL;
+        lyra_panic("eval-string requires a string argument");
     }
 
     Value *code_val = list_index(args, 0);
     if (code_val->type != STRING) {
-        printf("eval-string requires a string argument\n");
-        return NIL;
+        lyra_panic("eval-string requires a string argument");
     }
 
     const char *code = utstring_body(code_val->data.as_string);
@@ -740,8 +729,9 @@ Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args) {
             }
             if (only_whitespace) break;
 
-            printf("eval-string: parse error\n");
-            return NIL;
+            // parse_with_pos has returned (and freed its tokens) by now, so
+            // panicking here can't leak parser memory.
+            lyra_panic("eval-string: parse error");
         }
         result = eval_s_expr(gc, closure, ast);
         if (result == NULL) {
@@ -765,8 +755,7 @@ void intrinsic_set_print_stream(FILE *stream) {
 static Value *write_strings(Value *args, const char *name, bool newline) {
     for (Value *p = args; !is_nil(p); p = list_tail(p)) {
         if (list_head(p)->type != STRING) {
-            printf("%s requires string arguments\n", name);
-            return NIL;
+            lyra_panic("%s requires string arguments", name);
         }
     }
 
@@ -793,18 +782,31 @@ Value *intrinsic_write(GC *gc, Closure *closure, Value *args) {
     return write_strings(args, "write", false);
 }
 
+// (panic "a" "b" ...) - abort evaluation with the concatenated message.
+// Same argument rules as print/write: strings only, no implicit conversion.
+Value *intrinsic_panic(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    UT_string *message = gc_alloc_string(gc);
+    for (Value *p = args; !is_nil(p); p = list_tail(p)) {
+        Value *arg = list_head(p);
+        if (arg->type != STRING) {
+            lyra_panic("panic requires string arguments");
+        }
+        utstring_concat(message, arg->data.as_string);
+    }
+    lyra_panic("%s", utstring_body(message));
+}
+
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     // (get-var 'symbol)
     if (list_length(args) < 1) {
-        printf("get-var requires a symbol argument\n");
-        return NIL;
+        lyra_panic("get-var requires a symbol argument");
     }
 
     Value *sym = list_index(args, 0);
     if (sym->type != SYMBOL) {
-        printf("get-var requires a symbol argument\n");
-        return NIL;
+        lyra_panic("get-var requires a symbol argument");
     }
 
     Value *value = get_var(closure, sym->data.as_symbol);
@@ -819,14 +821,12 @@ Value *intrinsic_pure_p(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     // (pure? fn)
     if (list_length(args) < 1) {
-        printf("pure? requires a function argument\n");
-        return FALSE;
+        lyra_panic("is-pure requires a function argument");
     }
 
     Value *fn = list_index(args, 0);
     if (fn->type != FUNCTION && fn->type != MACRO) {
-        printf("pure? requires a function or macro argument\n");
-        return FALSE;
+        lyra_panic("is-pure requires a function or macro argument");
     }
 
     Callable *callable = (fn->type == FUNCTION) ? fn->data.as_function : fn->data.as_macro;
@@ -878,8 +878,7 @@ Value *intrinsic_string(GC *gc, Closure *closure, Value *args) {
                 utstring_printf(str, "%f", arg->data.as_float);
                 break;
             default:
-                printf("string: cannot convert type to string\n");
-                return NIL;
+                lyra_panic("string: cannot convert %s to a string", utstring_body(repr(gc, arg)));
         }
         return make_string(gc, str);
     }
@@ -889,8 +888,7 @@ Value *intrinsic_string(GC *gc, Closure *closure, Value *args) {
     while (!is_nil(args)) {
         Value *arg = list_head(args);
         if (arg->type != STRING) {
-            printf("string: multiple arguments must all be strings\n");
-            return NIL;
+            lyra_panic("string: multiple arguments must all be strings");
         }
         utstring_printf(result, "%s", utstring_body(arg->data.as_string));
         args = list_tail(args);
@@ -904,8 +902,7 @@ Value *intrinsic_symbol(GC *gc, Closure *closure, Value *args) {
     // (symbol "foo") => 'foo  - string to symbol
 
     if (list_length(args) < 1) {
-        printf("symbol requires an argument\n");
-        return NIL;
+        lyra_panic("symbol requires an argument");
     }
 
     Value *arg = list_index(args, 0);
@@ -919,8 +916,7 @@ Value *intrinsic_symbol(GC *gc, Closure *closure, Value *args) {
             // Symbol to symbol is identity
             return arg;
         default:
-            printf("symbol: cannot convert type to symbol\n");
-            return NIL;
+            lyra_panic("symbol: cannot convert %s to a symbol", utstring_body(repr(gc, arg)));
     }
 
     return make_symbol(gc, sym);
@@ -931,29 +927,25 @@ Value *intrinsic_module(GC *gc, Closure *closure, Value *args) {
     // Registers module exports and evaluates body
 
     if (list_length(args) < 3) {
-        printf("module requires: name, export list, and body\n");
-        return NIL;
+        lyra_panic("module requires: name, export list, and body");
     }
 
     // Get module name (unevaluated - it's a special form)
     Value *name_val = list_index(args, 0);
     if (name_val->type != SYMBOL) {
-        printf("module: name must be a symbol\n");
-        return NIL;
+        lyra_panic("module: name must be a symbol");
     }
 
     // Get export list: (export sym1 sym2 ...)
     Value *export_form = list_index(args, 1);
     if (export_form->type != CONS || list_length(export_form) < 1) {
-        printf("module: expected (export ...) form\n");
-        return NIL;
+        lyra_panic("module: expected (export ...) form");
     }
 
     Value *export_keyword = list_head(export_form);
     if (export_keyword->type != SYMBOL ||
         strcmp(utstring_body(export_keyword->data.as_symbol), "export") != 0) {
-        printf("module: expected (export ...) form\n");
-        return NIL;
+        lyra_panic("module: expected (export ...) form");
     }
 
     Value *export_syms = list_tail(export_form);
@@ -991,16 +983,14 @@ Value *intrinsic_module(GC *gc, Closure *closure, Value *args) {
     for (Value *syms = export_syms; !is_nil(syms); syms = list_tail(syms)) {
         Value *sym = list_head(syms);
         if (sym->type != SYMBOL) {
-            printf("module: export list must contain only symbols\n");
-            return NIL;
+            lyra_panic("module: export list must contain only symbols");
         }
 
         // Get the value of this symbol
         Value *val = get_var(closure, sym->data.as_symbol);
         if (val == NULL) {
-            printf("module: exported symbol '%s' not defined\n",
-                   utstring_body(sym->data.as_symbol));
-            return NIL;
+            lyra_panic("module: exported symbol '%s' not defined",
+                       utstring_body(sym->data.as_symbol));
         }
 
         // Add (sym . val) to exports_alist
@@ -1078,20 +1068,19 @@ Value *intrinsic_list_directory(GC *gc, Closure *closure, Value *args) {
     // (list-directory "path") => list of filenames in directory
 
     if (list_length(args) < 1) {
-        printf("list-directory requires a path argument\n");
-        return NIL;
+        lyra_panic("list-directory requires a path argument");
     }
 
     Value *path_val = list_index(args, 0);
     if (path_val->type != STRING) {
-        printf("list-directory requires a string path\n");
-        return NIL;
+        lyra_panic("list-directory requires a string path");
     }
 
     const char *path = utstring_body(path_val->data.as_string);
 
     char **entries = platform_list_directory(path);
     if (!entries) {
+        // TODO: result
         printf("list-directory: could not open directory '%s'\n", path);
         return NIL;
     }
@@ -1120,8 +1109,7 @@ Value *intrinsic_list_directory(GC *gc, Closure *closure, Value *args) {
 // - Lists match lists of same structure recursively
 Value *intrinsic_match(GC *gc, Closure *closure, Value *args) {
     if (list_length(args) < 2) {
-        printf("match requires at least an expression and one clause\n");
-        return NIL;
+        lyra_panic("match requires at least an expression and one clause");
     }
 
     // First argument is the expression to match (unevaluated)
@@ -1130,8 +1118,7 @@ Value *intrinsic_match(GC *gc, Closure *closure, Value *args) {
     // Evaluate the expression once in the current closure
     Value *value = eval_s_expr(gc, closure, expr);
     if (value == NULL) {
-        printf("match: failed to evaluate expression\n");
-        return NIL;
+        lyra_panic("match: failed to evaluate expression");
     }
 
     // Rest of arguments are match clauses: ((pattern) body)
@@ -1143,8 +1130,7 @@ Value *intrinsic_match(GC *gc, Closure *closure, Value *args) {
 
         // Each clause should be a list: (pattern body...)
         if (clause->type != CONS || is_nil(clause)) {
-            printf("match: invalid clause format (expected list)\n");
-            continue;
+            lyra_panic("match: invalid clause %s (expected a list)", utstring_body(repr(gc, clause)));
         }
 
         // Extract pattern - it's the first element of the clause
@@ -1172,8 +1158,7 @@ Value *intrinsic_match(GC *gc, Closure *closure, Value *args) {
     }
 
     // No pattern matched
-    printf("match: no pattern matched\n");
-    return NIL;
+    lyra_panic("match: no pattern matched %s", utstring_body(repr(gc, value)));
 }
 
 // Helper function to recursively check pattern matching
@@ -1244,8 +1229,7 @@ static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value) {
                 // Variadic matches rest of list - must be last in pattern
                 Value *pattern_tail = list_tail(pattern);
                 if (!is_nil(pattern_tail)) {
-                    printf("Error: variadic pattern must be last\n");
-                    return false;
+                    lyra_panic("match: variadic pattern must be last");
                 }
                 // Value must be a list (already checked above)
                 return true;

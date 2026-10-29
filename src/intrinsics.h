@@ -59,6 +59,9 @@ Value *intrinsic_print(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_write(GC *gc, Closure *closure, Value *args);
 void intrinsic_set_print_stream(FILE *stream);  // NULL restores stdout (used by tests)
 
+// Panics (see panic.h)
+Value *intrinsic_panic(GC *gc, Closure *closure, Value *args);
+
 // Variable access
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args);
 

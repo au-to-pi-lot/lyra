@@ -9,6 +9,7 @@
 #include "repr.h"
 #include "prelude.h"
 #include "gc.h"
+#include "panic.h"
 #include "types/list.h"
 
 #ifdef _WIN32
@@ -18,6 +19,28 @@
 #else
 #include <unistd.h>
 #endif
+
+// Evaluate one REPL expression and print its result. A panic abandons the
+// expression and returns to the prompt. The session survives: definitions
+// made before the panic are kept, and the caller's next gc_collect sweeps
+// whatever the aborted evaluation allocated. (setjmp lives in this small
+// function so its frame holds no locals that change after setjmp.)
+static void repl_eval(GC *gc, Closure *global, Value *ast) {
+    PanicHandler handler;
+    panic_push(&handler);
+    if (setjmp(handler.env) != 0) {
+        panic_report();
+        return;
+    }
+
+    Value *result = eval_s_expr(gc, global, ast);
+    panic_pop(&handler);
+    if (result == NULL) {
+        printf("Evaluation error\n");
+    } else {
+        printf("%s\n", utstring_body(repr(gc, result)));
+    }
+}
 
 void repl(GC *gc, Closure *global) {
     int is_tty = isatty(STDIN_FILENO);
@@ -43,13 +66,7 @@ void repl(GC *gc, Closure *global) {
             continue;
         }
 
-        Value *result = eval_s_expr(gc, global, ast);
-        if (result == NULL) {
-            printf("Evaluation error\n");
-            continue;
-        }
-
-        printf("%s\n", utstring_body(repr(gc, result)));
+        repl_eval(gc, global, ast);
 
         // Run garbage collection after each REPL expression
         gc_collect(gc, global);
@@ -57,6 +74,79 @@ void repl(GC *gc, Closure *global) {
 
     printf("\n");
     replxx_end(replxx);
+}
+
+static int only_whitespace(const char *input) {
+    for (const char *p = input; *p != '\0'; p++) {
+        if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// Parse and evaluate every expression in `source`, printing only the final
+// result. Any failure (parse error, evaluation error, panic) is reported on
+// stderr and exits with status 1. `context` (may be NULL) names the source in
+// parse/evaluation error messages. `owned` (may be NULL) is freed before
+// exiting or returning.
+static void eval_source(GC *gc, Closure *global, const char *source, const char *context, char *owned) {
+    const char *input = source;
+    Value *result = NIL;
+
+    while (*input != '\0') {
+        size_t consumed = 0;
+        Value *ast = parse_with_pos(gc, input, &consumed);
+
+        if (ast == NULL) {
+            // Reached the end (only whitespace/comments left)?
+            if (only_whitespace(input)) {
+                break;
+            }
+
+            if (context) {
+                fprintf(stderr, "Parse error in file '%s'\n", context);
+            } else {
+                fprintf(stderr, "Parse error\n");
+            }
+            free(owned);
+            exit(1);
+        }
+
+        result = eval_s_expr(gc, global, ast);
+        if (result == NULL) {
+            if (context) {
+                fprintf(stderr, "Evaluation error in file '%s'\n", context);
+            } else {
+                fprintf(stderr, "Evaluation error\n");
+            }
+            free(owned);
+            exit(1);
+        }
+
+        input += consumed;
+    }
+
+    // Print only the final result
+    printf("%s\n", utstring_body(repr(gc, result)));
+    free(owned);
+
+    // Run garbage collection after evaluation
+    gc_collect(gc, global);
+}
+
+// eval_source under a panic handler: a panic is reported on stderr and
+// exits with status 1.
+static void run_source(GC *gc, Closure *global, const char *source, const char *context, char *owned) {
+    PanicHandler handler;
+    panic_push(&handler);
+    if (setjmp(handler.env) != 0) {
+        panic_report();
+        free(owned);
+        exit(1);
+    }
+    eval_source(gc, global, source, context, owned);
+    panic_pop(&handler);
 }
 
 void run_file(GC *gc, Closure *global, const char *filename) {
@@ -76,49 +166,7 @@ void run_file(GC *gc, Closure *global, const char *filename) {
 
     string[fsize] = 0;
 
-    // Parse and evaluate all expressions in the file
-    const char *input = string;
-    Value *result = NIL;
-
-    while (*input != '\0') {
-        size_t consumed = 0;
-        Value *ast = parse_with_pos(gc, input, &consumed);
-
-        if (ast == NULL) {
-            // Check if we've reached the end (only whitespace/comments left)
-            int only_whitespace = 1;
-            for (const char *p = input; *p != '\0'; p++) {
-                if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
-                    only_whitespace = 0;
-                    break;
-                }
-            }
-
-            if (only_whitespace) {
-                break;
-            }
-
-            fprintf(stderr, "Parse error in file '%s'\n", filename);
-            free(string);
-            exit(1);
-        }
-
-        result = eval_s_expr(gc, global, ast);
-        if (result == NULL) {
-            fprintf(stderr, "Evaluation error in file '%s'\n", filename);
-            free(string);
-            exit(1);
-        }
-
-        input += consumed;
-    }
-
-    // Print only the final result
-    printf("%s\n", utstring_body(repr(gc, result)));
-    free(string);
-
-    // Run garbage collection after file evaluation
-    gc_collect(gc, global);
+    run_source(gc, global, string, filename, string);
 }
 
 void print_help(const char *program_name) {
@@ -135,46 +183,7 @@ void print_help(const char *program_name) {
 }
 
 void run_command(GC *gc, Closure *global, const char *code) {
-    // Parse and evaluate all expressions in the code string
-    const char *input = code;
-    Value *result = NIL;
-
-    while (*input != '\0') {
-        size_t consumed = 0;
-        Value *ast = parse_with_pos(gc, input, &consumed);
-
-        if (ast == NULL) {
-            // Check if we've reached the end (only whitespace left)
-            int only_whitespace = 1;
-            for (const char *p = input; *p != '\0'; p++) {
-                if (*p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
-                    only_whitespace = 0;
-                    break;
-                }
-            }
-
-            if (only_whitespace) {
-                break;
-            }
-
-            fprintf(stderr, "Parse error\n");
-            exit(1);
-        }
-
-        result = eval_s_expr(gc, global, ast);
-        if (result == NULL) {
-            fprintf(stderr, "Evaluation error\n");
-            exit(1);
-        }
-
-        input += consumed;
-    }
-
-    // Print only the final result
-    printf("%s\n", utstring_body(repr(gc, result)));
-
-    // Run garbage collection after command evaluation
-    gc_collect(gc, global);
+    run_source(gc, global, code, NULL, NULL);
 }
 
 int main(int argc, char **argv) {

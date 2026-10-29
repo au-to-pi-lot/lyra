@@ -73,6 +73,22 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<main-checkout>/external/vcpkg/script
   - Only prints the result of the final expression
   - Skips trailing whitespace/comments gracefully
 
+## Panics (Unrecoverable Errors)
+Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors, **ok/err result values** for recoverable ones. Results don't exist yet; panics are implemented in [src/panic.h](src/panic.h)/[src/panic.c](src/panic.c).
+
+- **Mechanism**: `lyra_panic(fmt, ...)` formats a message into a static buffer, pops the innermost `PanicHandler`, and `longjmp`s to it. Handlers form a stack (`panic_push`/`panic_pop`); the caller does `setjmp(handler.env)` itself in its own frame (see the usage block in `panic.h`). With no handler installed, the message is printed and the process exits 1
+- **No catching from Lyra code**: only C installs handlers. A panic always unwinds to the top level
+- **Top-level handlers** ([src/main.c](src/main.c)):
+  - REPL (`repl_eval`): prints `panic: <message>` to **stderr**, returns to the prompt. The session survives; definitions completed before the panic are kept (nothing is rolled back)
+  - File and `-c` mode (`run_source`): prints `panic: <message>` to stderr and exits with status 1
+  - `panic_report()` flushes stdout before writing to stderr so output ordering is sane
+- **What panics**: undefined variables (`undefined variable: \`x\``), non-callable call heads (`not callable: 5`), arity/type errors in intrinsics, malformed `lambda` parameter lists, `define-macro` on a non-function, `match` with no matching clause, `eval-string` parse errors, and explicit `(panic ...)`
+- **What doesn't (yet)**: I/O failures (`load-file` can't open a file, `list-directory` can't open a directory) still print and return `nil`; they're marked `// TODO: result` and will become err results. `get-var` on an unbound symbol returns `nil` by design (the module system uses it as a "defined?" check). Many intrinsics still silently return `nil` on bad input without any message (e.g. `(car 5)`, `(+ 1 "a")`, `(divmod 1)`); converting those is follow-up work
+- **GC safety**: collection runs only at top-level safe points (after a REPL expression / file / `-c` run), never mid-evaluation, so a panic can't interrupt a collection. Whatever the aborted evaluation allocated stays registered and is swept by the next `gc_collect` if unreachable. `gc_alloc_cons` initializes `car`/`cdr` to `NIL`, so a half-built list never holds garbage pointers
+- **Parser memory**: the parser never panics; it reports failure by returning `NULL`. So its manually managed tokens can't leak through a `longjmp`. Callers that turn a parse failure into a panic (`eval-string`) do so after `parse_with_pos` has returned
+- **setjmp hygiene**: keep functions that call `setjmp` small (`repl_eval`, `run_source`, the test helpers), so no locals change between `setjmp` and a possible `longjmp`. Locals that must be read in the panic branch after being changed need `volatile`
+- **Testing**: `eval_panics()` / `ck_assert_panics()` in [tests/test_eval.c](tests/test_eval.c) evaluate with a handler installed and expose the message. Keep `ck_assert` calls outside the protected region: in Check's no-fork mode (Windows) a failed assertion `longjmp`s too and would skip `panic_pop`
+
 ## Value Types
 - Core types defined in `src/types/value.h`: CONS, INT, FLOAT, BOOLEAN, STRING, SYMBOL, FUNCTION, MACRO
 - Closures use uthash for variable storage
@@ -88,7 +104,7 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<main-checkout>/external/vcpkg/script
 - **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
 
 **Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
-**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
+**Impure intrinsics**: `panic` (aborts evaluation), `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
 
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
@@ -186,11 +202,16 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 
 **Output** (impure):
 - `print` - Write strings to stdout followed by a newline: `(print "a" "b")` writes `ab` + newline, returns `nil`
-  - Any number of arguments, all of which must be strings (no implicit conversion); otherwise prints an error, writes nothing, and returns `nil`. `(print)` emits just a newline
+  - Any number of arguments, all of which must be strings (no implicit conversion); otherwise panics (`print requires string arguments`) before writing anything. `(print)` emits just a newline
 - `write` - Same as `print` but with no trailing newline: `(write "a" "b")` writes `ab`
   - Both share `write_strings` in `intrinsics.c` and flush after every call
   - Named `write` so a later task can add a file-handle first argument
   - Output goes to `stdout` unless redirected with `intrinsic_set_print_stream(FILE*)` (test hook)
+
+**Errors** (impure):
+- `panic` - Abort evaluation with a message: `(panic "bad value: " (string x))`
+  - Same argument rules as `print`: any number of strings, concatenated with no separator; a non-string argument is itself a panic (`panic requires string arguments`). `(panic)` has an empty message
+  - Not catchable from Lyra code; see the Panics section
 
 **Higher-Level Forms** (defined in Lisp):
 - `Z` - Z combinator for recursion
@@ -359,6 +380,7 @@ The Lyra interpreter supports multiple modes:
 
 ### Fixed Bugs
 - **Macro argument binding bug** ([src/call.c:87](src/call.c#L87)): Was using `list_head(args)` instead of `list_head(args_iter)` when binding macro parameters, causing incorrect argument binding when iterating through parameter list. This caused the `fn` macro to fail because parameters were bound to wrong values.
+- **GC freed variadic parameter names** ([src/gc.c](src/gc.c), `gc_mark_from_value`): `VARIADIC_MARKER` values (the processed form of a `*args` parameter) hold their name in `data.as_symbol`, but the mark phase only marked that string for `SYMBOL`. The first `gc_collect` freed the name of every variadic parameter still in use, e.g. the ones inside the prelude's `Z` combinator, so in the REPL any second expression that called an `fn`-defined function (`map`, `foldl`, ...) crashed. Found while testing that the REPL survives a panic.
 
 ### Code Patterns
 - **Macro expansion**: Macros receive unevaluated arguments, run the macro body (the transformer) in a fresh child of the closure **captured where the macro was defined** (lexical scope; params are bound there, and expansion-time `define`s stay there), then evaluate the resulting expansion in the **caller's** closure ([src/call.c](src/call.c), `call_derived_macro`)
@@ -412,8 +434,8 @@ The Lyra interpreter supports multiple modes:
 - Each `gensym()` call returns a unique symbol (G__0, G__1, ...)
 
 ## Testing
-- **Test Coverage**: 90 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
-  - `test_eval.c`: 51 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns
+- **Test Coverage**: 124 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
+  - `test_eval.c`: 85 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
   - `test_parser.c`: 14 tests covering lexing and parsing
 - Run tests with `make test` (Linux/macOS) or `ctest --test-dir build -C Debug` (Windows)
@@ -439,7 +461,7 @@ The Lyra interpreter supports multiple modes:
 - **Macro hygiene**: ✅ **Solved!** - Use `gensym` to generate unique symbols in macros
   - `gensym` generates symbols like `G__0`, `G__1`, etc.
   - See "Macro Hygiene Patterns" section for usage examples
-- **Error handling**: Limited error messages, no stack traces
+- **Error handling**: Programmer errors panic (see Panics section), but there are no stack traces or source locations yet, many intrinsics still return `nil` silently on bad input, and recoverable errors have no result values yet
 - **Tail-call optimization (TCO)**: Not implemented - recursive functions will overflow stack on large inputs
   - `foldl`, `reverse`, `map`, `filter` are all tail-recursive (would benefit from TCO)
   - These use `foldl` internally, so they're stack-efficient once TCO is added
