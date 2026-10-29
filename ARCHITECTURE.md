@@ -165,7 +165,7 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `is-pure` - Check if function is pure: `(is-pure +)` → `true`
 - `expand-macro-1` - Expand a quoted form **one step** without evaluating it: `(expand-macro-1 '(let ((x 1)) x))` → `((lambda (x) x) 1)`
 - `expand-macro` - Expand repeatedly **at the head** until the head is no longer a macro (subforms are not expanded): `(expand-macro '(fn id (x) x))` → `(define id (Z (lambda (id) (lambda (x) x))))`
-  - Both are ordinary functions, so the form must be quoted (it may also be computed); the head is resolved in the caller's scope
+  - Both are ordinary functions, so the form must be quoted (it may also be computed); the head is resolved in the caller's scope, but the macro body runs in its definition-site scope
   - Only derived (user/prelude) macros expand. Special forms (`if`, `lambda`, `define`, ...), function calls, unbound heads and atoms come back unchanged
   - No `expand-macro-all`: a tree walker (e.g. a compiler written in Lyra) is expected to call these itself
   - Impure: expansion runs the macro body (which may call `gensym`, etc.). Strictly, purity depends on the macro being expanded
@@ -352,7 +352,7 @@ The Lyra interpreter supports multiple modes:
 - **Macro argument binding bug** ([src/call.c:87](src/call.c#L87)): Was using `list_head(args)` instead of `list_head(args_iter)` when binding macro parameters, causing incorrect argument binding when iterating through parameter list. This caused the `fn` macro to fail because parameters were bound to wrong values.
 
 ### Code Patterns
-- **Macro expansion**: Macros receive unevaluated arguments, expand them in a fresh child of the **caller's** closure (expansion-time `define`s stay there and don't leak), then evaluate the expansion in the caller's closure ([src/call.c](src/call.c), `call_derived_macro`)
+- **Macro expansion**: Macros receive unevaluated arguments, run the macro body (the transformer) in a fresh child of the closure **captured where the macro was defined** (lexical scope; params are bound there, and expansion-time `define`s stay there), then evaluate the resulting expansion in the **caller's** closure ([src/call.c](src/call.c), `call_derived_macro`)
   - Expansion and evaluation are separate steps: `expand_derived_macro` produces the expansion only, and `call_derived_macro` = expand + `eval_s_expr`
   - `macroexpand_1` / `macroexpand` ([src/call.h](src/call.h)) are the C-level "expand without evaluating" helpers behind the `expand-macro-1` / `expand-macro` intrinsics: they resolve the head symbol in the given closure like `eval_s_expr` does, expand only **derived** macros (special forms / intrinsic macros, functions, unbound or non-symbol heads, and atoms come back unchanged, by pointer), and never descend into subforms. `macroexpand` repeats at the head until the form stops being a derived-macro call
 - **Function application**: Functions receive evaluated arguments and execute in a new closure derived from their definition environment
@@ -366,7 +366,7 @@ The Lyra interpreter supports multiple modes:
 **Solution**: Use `gensym` to generate guaranteed-unique symbols for variables that appear in the macro's template.
 
 **Important Distinction**:
-- Variables used **during macro expansion** (in macro body): Safe - they're in macro's closure
+- Variables used **during macro expansion** (in macro body): Safe - they resolve in the macro's definition-site scope, never the caller's
 - Variables used **in generated code** (in the template): Need gensym if not user-provided
 
 **Example**:

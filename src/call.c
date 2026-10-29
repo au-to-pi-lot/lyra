@@ -69,8 +69,11 @@ void assign_args(GC *gc, Closure *closure, Value *params, Value *args) {
 }
 
 Value *expand_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args) {
-    // Expansion-time bindings live in a fresh child of the caller's closure
-    Closure *new_closure = make_closure(gc, closure);
+    // The macro body runs lexically: in a fresh child of the closure captured
+    // where the macro was defined, not the caller's. (`closure`, the caller's,
+    // is only used by call_derived_macro to evaluate the expansion.)
+    (void)closure;
+    Closure *new_closure = make_closure(gc, callable.closure);
     assign_args(gc, new_closure, callable.params, args);
 
     // Evaluate body to get expansion
