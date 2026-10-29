@@ -2230,8 +2230,14 @@ START_TEST(test_loud_arithmetic)
     ck_assert_panics(&gc, closure, "(/ \"a\" 1)", "/ expects numbers, but got \"a\"");
 
     // Division by zero
+    ck_assert_panics(&gc, closure, "(/)", "/ expects at least 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(/ 0)", "division by zero");
+    ck_assert_panics(&gc, closure, "(/ 0.0)", "division by zero");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(/ 4)"), "0.25");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(/ 2.0)"), "0.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(/ -4)"), "-0.25");
     ck_assert_panics(&gc, closure, "(/ 1 0)", "division by zero");
-    ck_assert_panics(&gc, closure, "(/ 1 0.0)", "division by zero");
+    ck_assert_panics(&gc, closure, "(/ 1.0 0.0)", "division by zero");
     ck_assert_panics(&gc, closure, "(divmod 7 0)", "division by zero");
 
     // divmod arity and types
@@ -2240,14 +2246,98 @@ START_TEST(test_loud_arithmetic)
     ck_assert_panics(&gc, closure, "(divmod 1 2.0)", "divmod expects integers, but got 1 and 2.0");
     ck_assert_panics(&gc, closure, "(divmod \"a\" 2)", "divmod expects integers, but got \"a\" and 2");
 
-    // Valid uses are unchanged, including int/float promotion
+    // Valid uses are unchanged
     ck_assert_str_eq(eval_repr(&gc, closure, "(+ 1 2 3)"), "6");
-    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 1 2.5)"), "3.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 1.5 2.5)"), "4.0");
     ck_assert_str_eq(eval_repr(&gc, closure, "(- 10 3 2)"), "5");
-    ck_assert_str_eq(eval_repr(&gc, closure, "(- 5.5 1)"), "4.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- 5.5 1.0)"), "4.5");
     ck_assert_str_eq(eval_repr(&gc, closure, "(* 2 3 4)"), "24");
     ck_assert_str_eq(eval_repr(&gc, closure, "(/ 7 2)"), "3.5");
     ck_assert_str_eq(eval_repr(&gc, closure, "(divmod 7 2)"), "(3 1)");
+    // divmod floors (Python style): remainder takes the divisor's sign
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod -7 2)"), "(-4 1)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod 7 -2)"), "(-4 -1)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod -8 2)"), "(-4 0)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod -7 -2)"), "(3 -1)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_no_implicit_promotion)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(+ 1 2.5)", "+ cannot combine 1 and 2.5: mixed int and float");
+    ck_assert_panics(&gc, closure, "(+ 1.5 2)", "+ cannot combine 1.5 and 2: mixed int and float");
+    ck_assert_panics(&gc, closure, "(+ 1 2 3.0)", "+ cannot combine 1 and 3.0: mixed int and float");
+    ck_assert_panics(&gc, closure, "(- 5 1.0)", "- cannot combine 5 and 1.0: mixed int and float");
+    ck_assert_panics(&gc, closure, "(* 2.0 3)", "* cannot combine 2.0 and 3: mixed int and float");
+    ck_assert_panics(&gc, closure, "(/ 7 2.0)", "/ cannot combine 7 and 2.0: mixed int and float");
+    ck_assert_panics(&gc, closure, "(/ 7.0 2)", "/ cannot combine 7.0 and 2: mixed int and float");
+
+    // Nullary and unary forms keep their type
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+)"), "0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(*)"), "1");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- 2.5)"), "-2.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- 5)"), "-5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- -3)"), "3");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- 0)"), "0");
+    ck_assert_panics(&gc, closure, "(-)", "- expects at least 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(- (- 0 2147483647 1))", "integer overflow in -");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(* 2.5 2.0)"), "5.0");
+
+    // Explicit conversion makes mixed arithmetic expressible
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ (float 1) 2.5)"), "3.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 1 (int 2.9))"), "3");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_int_float_conversion)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_str_eq(eval_repr(&gc, closure, "(int 42)"), "42");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(int 2.9)"), "2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(int -2.9)"), "-2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(int -0.5)"), "0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(float 3)"), "3.0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(float -3)"), "-3.0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(float 2.5)"), "2.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(int (float -2147483648))"), "-2147483648");
+
+    ck_assert_str_eq(eval_repr(&gc, closure, "(floor 2.5)"), "2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(floor -2.5)"), "-3");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(ceiling 2.5)"), "3");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(ceiling -2.5)"), "-2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round 2.4)"), "2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round 2.6)"), "3");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round 0.5)"), "1");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round 1.5)"), "2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round 2.5)"), "3");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round -2.5)"), "-3");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(round -3.5)"), "-4");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(truncate -2.9)"), "-2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(truncate 5)"), "5");
+    ck_assert_panics(&gc, closure, "(truncate 3000000000.0)", "truncate cannot convert 3e+09: out of range");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(floor 7)"), "7");
+    ck_assert_panics(&gc, closure, "(floor 3000000000.0)", "floor cannot convert 3e+09: out of range");
+    ck_assert_panics(&gc, closure, "(round 'x)", "round expects a number, but got x");
+    ck_assert_panics(&gc, closure, "(ceiling)", "ceiling expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(int)", "int expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(float 1 2)", "float expects exactly 1 argument, but got 2");
+    ck_assert_panics(&gc, closure, "(int \"42\")", "int expects a number, but got \"42\"");
+    ck_assert_panics(&gc, closure, "(float 'x)", "float expects a number, but got x");
+    ck_assert_panics(&gc, closure, "(int 3000000000.0)", "int cannot convert 3e+09: out of range");
+    ck_assert_panics(&gc, closure, "(int -3000000000.0)", "int cannot convert -3e+09: out of range");
 
     gc_free_all(&gc);
 }
@@ -2728,6 +2818,8 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_loud_list_ops);
     tcase_add_test(tc_core, test_loud_arithmetic);
     tcase_add_test(tc_core, test_loud_comparison);
+    tcase_add_test(tc_core, test_no_implicit_promotion);
+    tcase_add_test(tc_core, test_int_float_conversion);
     tcase_add_test(tc_core, test_loud_eval_and_special_forms);
     tcase_add_test(tc_core, test_loud_call_arity);
     tcase_add_test(tc_core, test_repr_float_writes_into_string);
