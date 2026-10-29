@@ -1193,7 +1193,7 @@ START_TEST(test_expand_macro_non_macro_unchanged)
 }
 END_TEST
 
-START_TEST(test_expand_macro_shows_gensym_and_is_impure)
+START_TEST(test_expand_macro_shows_gensym)
 {
     GC gc;
     gc_init(&gc);
@@ -1211,12 +1211,6 @@ START_TEST(test_expand_macro_shows_gensym_and_is_impure)
     // ...and expanding really ran the body: the gensym counter moved
     ck_assert_str_eq(eval_repr(&gc, closure, "(gensym)"), "#:G__1");
 
-    Value *pure = eval_string(&gc, closure, "(is-pure expand-macro)");
-    ck_assert_ptr_nonnull(pure);
-    ck_assert_int_eq(pure->data.as_boolean, false);
-    pure = eval_string(&gc, closure, "(is-pure expand-macro-1)");
-    ck_assert_ptr_nonnull(pure);
-    ck_assert_int_eq(pure->data.as_boolean, false);
 
     gc_free_all(&gc);
 }
@@ -2068,12 +2062,6 @@ START_TEST(test_print)
     fclose(tmp);
     ck_assert_str_eq(buf, "hello worldabcpq\n\n");
 
-    result = eval_string(&gc, closure, "(is-pure print)");
-    ck_assert_ptr_nonnull(result);
-    ck_assert(result->data.as_boolean == false);
-    result = eval_string(&gc, closure, "(is-pure write)");
-    ck_assert_ptr_nonnull(result);
-    ck_assert(result->data.as_boolean == false);
 
     gc_free_all(&gc);
 }
@@ -2101,9 +2089,6 @@ START_TEST(test_panic_intrinsic)
     ck_assert_panics(&gc, closure, "(panic \"x\")", "x");
     ck_assert_int_eq(panic_exit_status(), 1);
 
-    Value *result = eval_string(&gc, closure, "(is-pure panic)");
-    ck_assert_ptr_nonnull(result);
-    ck_assert(result->data.as_boolean == false);
 
     gc_free_all(&gc);
 }
@@ -2136,9 +2121,6 @@ START_TEST(test_panic_with_status)
     ck_assert_panics(&gc, closure, "(panic-with-status 2 42)", "panic-with-status requires string arguments");
     ck_assert_int_eq(panic_exit_status(), 1);
 
-    Value *result = eval_string(&gc, closure, "(is-pure panic-with-status)");
-    ck_assert_ptr_nonnull(result);
-    ck_assert(result->data.as_boolean == false);
 
     gc_free_all(&gc);
 }
@@ -2169,7 +2151,6 @@ START_TEST(test_panic_programmer_errors)
     ck_assert_panics(&gc, closure, "(symbol 42)", "symbol: cannot convert 42 to a symbol");
     ck_assert_panics(&gc, closure, "(string '(1))", "string: cannot convert (1) to a string");
     ck_assert_panics(&gc, closure, "(string \"a\" 1)", "string: multiple arguments must all be strings");
-    ck_assert_panics(&gc, closure, "(is-pure 1)", "is-pure requires a function or macro argument");
     ck_assert_panics(&gc, closure, "(expand-macro-1)",
                      "expand-macro-1 requires exactly one argument (a quoted form)");
     ck_assert_panics(&gc, closure, "(load-file 42)", "load-file requires a string filename");
@@ -2885,7 +2866,7 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_expand_macro_1_intrinsic);
     tcase_add_test(tc_core, test_expand_macro_intrinsic);
     tcase_add_test(tc_core, test_expand_macro_non_macro_unchanged);
-    tcase_add_test(tc_core, test_expand_macro_shows_gensym_and_is_impure);
+    tcase_add_test(tc_core, test_expand_macro_shows_gensym);
     tcase_add_test(tc_core, test_not);
     tcase_add_test(tc_core, test_and_short_circuit);
     tcase_add_test(tc_core, test_or_short_circuit);

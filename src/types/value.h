@@ -113,7 +113,6 @@ struct Derived {
 /// @brief Discriminated union over CallableType.
 struct Callable {
     CallableType type;
-    bool is_pure;  // True = pure (no side effects), False = impure
     union {
         Intrinsic as_intrinsic;
         Derived as_derived;
