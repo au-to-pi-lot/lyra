@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include "platform_dir.h"
 #include "panic.h"
 
@@ -29,6 +30,9 @@
 static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value);
 static bool values_equal(Value *a, Value *b);
 static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *value);
+
+// Argument validation helpers (defined below, before the arithmetic intrinsics)
+static void expect_arity(const char *name, Value *args, int n);
 
 Value *process_params(GC *gc, Value *params) {
     // Process parameter list to convert *name to VARIADIC_MARKER
@@ -108,6 +112,10 @@ Value *intrinsic_lambda(GC *gc, Closure *closure, Value *args) {
     }
 #endif
 
+    if (is_nil(args)) {
+        lyra_panic("lambda expects a parameter list");
+    }
+
     Value *processed_params = process_params(gc, list_head(args));
 
     Value *result = make_derived_function(
@@ -127,6 +135,12 @@ Value *intrinsic_if(GC *gc, Closure *closure, Value *args) {
     // args->car = condition
     // args->cdr->car = then-expr
     // args->cdr->cdr->car = else-expr (optional)
+
+    int arg_count = list_length(args);
+    if (arg_count != 2 && arg_count != 3) {
+        lyra_panic("if expects a condition, a then-branch and an optional else-branch, but got %d arguments",
+                   arg_count);
+    }
 
     Value *condition = eval_s_expr(gc, closure, list_head(args));
 
@@ -153,6 +167,12 @@ Value *intrinsic_define(GC *gc, Closure *closure, Value *args) {
     // args->car = name (symbol)
     // args->cdr->car = value expression (to be evaluated)
 
+    expect_arity("define", args, 2);
+    if (list_head(args)->type != SYMBOL) {
+        lyra_panic("define expects a symbol as its name, but got %s",
+                   utstring_body(repr(gc, list_head(args))));
+    }
+
     UT_string *name = list_head(args)->data.as_symbol;
     Value *value = eval_s_expr(gc, closure, list_index(args, 1));
 
@@ -163,6 +183,12 @@ Value *intrinsic_define(GC *gc, Closure *closure, Value *args) {
 }
 
 Value *intrinsic_define_macro(GC *gc, Closure *closure, Value *args) {
+    expect_arity("define-macro", args, 2);
+    if (list_head(args)->type != SYMBOL) {
+        lyra_panic("define-macro expects a symbol as its name, but got %s",
+                   utstring_body(repr(gc, list_head(args))));
+    }
+
     UT_string *name = list_head(args)->data.as_symbol;
     Value *function = eval_s_expr(gc, closure, list_index(args, 1));
 
@@ -228,151 +254,151 @@ Value *intrinsic_not(GC *gc, Closure *closure, Value *args) {
     return boolean_not(truthiness(value));
 }
 
-Value *intrinsic_add(GC *gc, Closure *closure, Value *args) {
-    (void)closure;
-    // (+ arg1 arg2 ...)
-    int int_result = 0;
-    float float_result = 0.0f;
-    int has_float = 0;
+// ---- Argument validation helpers --------------------------------------
+// Wrong arity and wrong types are programmer errors, so they panic.
 
-    for (Value *arg = list_head(args); !is_nil(args); args = list_tail(args), arg = list_head(args)) {
-        if (arg->type == INT) {
-            if (has_float) {
-                float_result += arg->data.as_int;
+static const char *plural_args(int n) {
+    return n == 1 ? "argument" : "arguments";
+}
+
+// Panic unless `args` has exactly `n` elements.
+static void expect_arity(const char *name, Value *args, int n) {
+    int got = list_length(args);
+    if (got != n) {
+        lyra_panic("%s expects exactly %d %s, but got %d", name, n, plural_args(n), got);
+    }
+}
+
+// Panic unless `v` is an int or a float.
+static void expect_number(GC *gc, const char *name, Value *v) {
+    if (v->type != INT && v->type != FLOAT) {
+        lyra_panic("%s expects numbers, but got %s", name, utstring_body(repr(gc, v)));
+    }
+}
+
+// Panic unless `v` is a list (a cons cell or nil).
+static void expect_list(GC *gc, const char *name, Value *v) {
+    if (v->type != CONS) {
+        lyra_panic("%s expects a list, but got %s", name, utstring_body(repr(gc, v)));
+    }
+}
+
+// Shared by + - * : folds `args` left to right. Ints stay ints until the
+// first float, after which the accumulator is a float (see ARCHITECTURE.md).
+// For - the first argument is the starting value instead of being subtracted.
+typedef enum { ARITH_ADD, ARITH_SUB, ARITH_MUL } ArithOp;
+
+static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
+    int int_result = (op == ARITH_MUL) ? 1 : 0;
+    float float_result = 0.0f;
+    bool has_float = false;
+    bool first = true;
+
+    for (; !is_nil(args); args = list_tail(args)) {
+        Value *arg = list_head(args);
+        expect_number(gc, name, arg);
+
+        if (first && op == ARITH_SUB) {
+            if (arg->type == FLOAT) {
+                has_float = true;
+                float_result = arg->data.as_float;
             } else {
-                int_result += arg->data.as_int;
+                int_result = arg->data.as_int;
             }
-        } else if (arg->type == FLOAT) {
-            if (!has_float) {
-                float_result = (float)int_result;
-                has_float = 1;
+            first = false;
+            continue;
+        }
+        first = false;
+
+        if (arg->type == FLOAT && !has_float) {
+            float_result = (float)int_result;
+            has_float = true;
+        }
+
+        if (has_float) {
+            float operand = (arg->type == FLOAT) ? arg->data.as_float : (float)arg->data.as_int;
+            switch (op) {
+                case ARITH_ADD: float_result += operand; break;
+                case ARITH_SUB: float_result -= operand; break;
+                case ARITH_MUL: float_result *= operand; break;
             }
-            float_result += arg->data.as_float;
+        } else {
+            int operand = arg->data.as_int;
+            switch (op) {
+                case ARITH_ADD: int_result += operand; break;
+                case ARITH_SUB: int_result -= operand; break;
+                case ARITH_MUL: int_result *= operand; break;
+            }
         }
     }
 
-    Value *result;
-    if (has_float) {
-        result = make_float(gc, float_result);
-    } else {
-        result = make_int(gc, int_result);
-    }
-    return result;
+    return has_float ? make_float(gc, float_result) : make_int(gc, int_result);
+}
+
+Value *intrinsic_add(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    // (+ arg1 arg2 ...)
+    return arith_fold(gc, "+", ARITH_ADD, args);
 }
 
 Value *intrinsic_sub(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     // (- arg1 arg2 ...)
-    if (is_nil(args)) return gc_alloc_value(gc, INT, (ValueData){.as_int = 0});
-
-    Value *first = list_head(args);
-    int has_float = (first->type == FLOAT);
-    int int_result = has_float ? 0 : first->data.as_int;
-    float float_result = has_float ? first->data.as_float : 0.0f;
-
-    args = list_tail(args);
-
-    for (Value *arg = list_head(args); !is_nil(args); args = list_tail(args), arg = list_head(args)) {
-        if (arg->type == INT) {
-            if (has_float) {
-                float_result -= arg->data.as_int;
-            } else {
-                int_result -= arg->data.as_int;
-            }
-        } else if (arg->type == FLOAT) {
-            if (!has_float) {
-                float_result = (float)int_result;
-                has_float = 1;
-            }
-            float_result -= arg->data.as_float;
-        }
-    }
-
-    Value *result;
-    if (has_float) {
-        result = make_float(gc, float_result);
-    } else {
-        result = make_int(gc, int_result);
-    }
-    return result;
+    return arith_fold(gc, "-", ARITH_SUB, args);
 }
 
 Value *intrinsic_mul(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     // (* arg1 arg2 ...)
-    int int_result = 1;
-    float float_result = 1.0f;
-    int has_float = 0;
-
-    for (Value *arg = list_head(args); !is_nil(args); args = list_tail(args), arg = list_head(args)) {
-        if (arg->type == INT) {
-            if (has_float) {
-                float_result *= arg->data.as_int;
-            } else {
-                int_result *= arg->data.as_int;
-            }
-        } else if (arg->type == FLOAT) {
-            if (!has_float) {
-                float_result = (float)int_result;
-                has_float = 1;
-            }
-            float_result *= arg->data.as_float;
-        }
-    }
-
-    Value *result;
-    if (has_float) {
-        result = make_float(gc, float_result);
-    } else {
-        result = make_int(gc, int_result);
-    }
-    return result;
+    return arith_fold(gc, "*", ARITH_MUL, args);
 }
 
 Value *intrinsic_div(GC *gc, Closure *closure, Value *args) {
     (void)closure;
-    // (/ arg1 arg2 ...)
+    // (/ arg1 arg2 ...) -- division always produces a float
     if (is_nil(args)) return make_float(gc, 1.0);
 
     Value *first = list_head(args);
-    int has_float = (first->type == FLOAT);
-    float float_result = has_float ? first->data.as_float : (float)first->data.as_int;
+    expect_number(gc, "/", first);
+    float float_result = (first->type == FLOAT) ? first->data.as_float : (float)first->data.as_int;
 
-    // Division always produces float
-    has_float = 1;
-
-    args = list_tail(args);
-
-    for (Value *arg = list_head(args); !is_nil(args); args = list_tail(args), arg = list_head(args)) {
-        if (arg->type == INT) {
-            float_result /= arg->data.as_int;
-        } else if (arg->type == FLOAT) {
-            float_result /= arg->data.as_float;
+    for (args = list_tail(args); !is_nil(args); args = list_tail(args)) {
+        Value *arg = list_head(args);
+        expect_number(gc, "/", arg);
+        float divisor = (arg->type == FLOAT) ? arg->data.as_float : (float)arg->data.as_int;
+        if (divisor == 0.0f) {
+            lyra_panic("division by zero");
         }
+        float_result /= divisor;
     }
 
-    Value *result = make_float(gc, float_result);
-    return result;
+    return make_float(gc, float_result);
 }
 
 Value *intrinsic_divmod(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     // (divmod dividend divisor) => (quotient remainder)
-    if (list_length(args) < 2) return NIL;
+    expect_arity("divmod", args, 2);
 
     Value *dividend = list_index(args, 0);
     Value *divisor = list_index(args, 1);
 
     // Only works with integers
-    if (dividend->type != INT || divisor->type != INT) return NIL;
+    if (dividend->type != INT || divisor->type != INT) {
+        lyra_panic("divmod expects integers, but got %s and %s",
+                   utstring_body(repr(gc, dividend)), utstring_body(repr(gc, divisor)));
+    }
+    if (divisor->data.as_int == 0) {
+        lyra_panic("division by zero");
+    }
+    if (dividend->data.as_int == INT_MIN && divisor->data.as_int == -1) {
+        lyra_panic("integer overflow in divmod");
+    }
 
     int quot = dividend->data.as_int / divisor->data.as_int;
     int rem = dividend->data.as_int % divisor->data.as_int;
 
-    // Create quotient Value
     Value *quot_val = make_int(gc, quot);
-
-    // Create remainder Value
     Value *rem_val = make_int(gc, rem);
 
     Value *result = NIL;
@@ -386,7 +412,7 @@ Value *intrinsic_eq(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
     // (= arg1 arg2)
-    if (list_length(args) < 2) return NIL;
+    expect_arity("=", args, 2);
 
     Value *first = list_index(args, 0);
     Value *second = list_index(args, 1);
@@ -415,130 +441,86 @@ Value *intrinsic_eq(GC *gc, Closure *closure, Value *args) {
     }
 }
 
-Value *intrinsic_lt(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
-    (void)closure;
-    // (= arg1 arg2)
-    if (list_length(args) < 2) return FALSE;
+typedef enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE } CmpOp;
 
-    Value *first = list_index(args, 0);
-    Value *second = list_index(args, 1);
+// Shared by < <= > >=. Exactly two numbers of the same type.
+static Value *compare_numbers(GC *gc, const char *name, CmpOp op, Value *args) {
+    expect_arity(name, args, 2);
 
-    // Type must match
-    if (first->type != second->type) return FALSE;
-
-        // Compare based on type
-    switch (first->type) {
-        case INT:
-            return first->data.as_int < second->data.as_int ? TRUE : FALSE;
-        case FLOAT:
-            return first->data.as_float < second->data.as_float ? TRUE : FALSE;
-        default:
-            return FALSE;
+    Value *a = list_index(args, 0);
+    Value *b = list_index(args, 1);
+    expect_number(gc, name, a);
+    expect_number(gc, name, b);
+    if (a->type != b->type) {
+        lyra_panic("%s cannot compare %s and %s: mixed int and float",
+                   name, utstring_body(repr(gc, a)), utstring_body(repr(gc, b)));
     }
+
+    bool result;
+    if (a->type == INT) {
+        int x = a->data.as_int, y = b->data.as_int;
+        result = op == CMP_LT ? x < y : op == CMP_LE ? x <= y : op == CMP_GT ? x > y : x >= y;
+    } else {
+        float x = a->data.as_float, y = b->data.as_float;
+        result = op == CMP_LT ? x < y : op == CMP_LE ? x <= y : op == CMP_GT ? x > y : x >= y;
+    }
+    return result ? TRUE : FALSE;
+}
+
+Value *intrinsic_lt(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    return compare_numbers(gc, "<", CMP_LT, args);
 }
 
 Value *intrinsic_lt_eq(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
     (void)closure;
-    // (= arg1 arg2)
-    if (list_length(args) < 2) return FALSE;
-
-    Value *first = list_index(args, 0);
-    Value *second = list_index(args, 1);
-
-    // Type must match
-    if (first->type != second->type) return FALSE;
-
-        // Compare based on type
-    switch (first->type) {
-        case INT:
-            return first->data.as_int <= second->data.as_int ? TRUE : FALSE;
-        case FLOAT:
-            return first->data.as_float <= second->data.as_float ? TRUE : FALSE;
-        default:
-            return FALSE;
-    }
+    return compare_numbers(gc, "<=", CMP_LE, args);
 }
 
 Value *intrinsic_gt(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
     (void)closure;
-    // (= arg1 arg2)
-    if (list_length(args) < 2) return FALSE;
-
-    Value *first = list_index(args, 0);
-    Value *second = list_index(args, 1);
-
-    // Type must match
-    if (first->type != second->type) return FALSE;
-
-        // Compare based on type
-    switch (first->type) {
-        case INT:
-            return first->data.as_int > second->data.as_int ? TRUE : FALSE;
-        case FLOAT:
-            return first->data.as_float > second->data.as_float ? TRUE : FALSE;
-        default:
-            return FALSE;
-    }
+    return compare_numbers(gc, ">", CMP_GT, args);
 }
 
 Value *intrinsic_gt_eq(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
     (void)closure;
-    // (= arg1 arg2)
-    if (list_length(args) < 2) return FALSE;
-
-    Value *first = list_index(args, 0);
-    Value *second = list_index(args, 1);
-
-    // Type must match
-    if (first->type != second->type) return FALSE;
-
-        // Compare based on type
-    switch (first->type) {
-        case INT:
-            return first->data.as_int >= second->data.as_int ? TRUE : FALSE;
-        case FLOAT:
-            return first->data.as_float >= second->data.as_float ? TRUE : FALSE;
-        default:
-            return FALSE;
-    }
+    return compare_numbers(gc, ">=", CMP_GE, args);
 }
 
 Value *intrinsic_car(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
     (void)closure;
-    // (car list)
-    if (list_length(args) < 1) return NIL;
+    // (car list) -- (car nil) is nil
+    expect_arity("car", args, 1);
     Value *list = list_index(args, 0);
+    expect_list(gc, "car", list);
     return list_head(list);
 }
 
 Value *intrinsic_cdr(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
     (void)closure;
-    // (cdr list)
-    if (list_length(args) < 1) return NIL;
+    // (cdr list) -- (cdr nil) is nil
+    expect_arity("cdr", args, 1);
     Value *list = list_index(args, 0);
+    expect_list(gc, "cdr", list);
     return list_tail(list);
 }
 
 Value *intrinsic_cons(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     // (cons elem list)
-    if (list_length(args) < 2) return NIL;
+    expect_arity("cons", args, 2);
     Value *elem = list_index(args, 0);
     Value *list = list_index(args, 1);
+    expect_list(gc, "cons", list);
     return list_append(gc, elem, list);
 }
 
 Value *intrinsic_apply(GC *gc, Closure *closure, Value *args) {
     // (apply fn arg-list)
-    if (list_length(args) < 2) return NIL;
+    expect_arity("apply", args, 2);
     Value *fn = list_index(args, 0);
     Value *arg_list = list_index(args, 1);
+    expect_list(gc, "apply", arg_list);
 
     // Call the function with the arg list
     if (fn->type == FUNCTION) {
@@ -547,7 +529,7 @@ Value *intrinsic_apply(GC *gc, Closure *closure, Value *args) {
         return call(gc, closure, fn->data.as_macro, arg_list);
     }
 
-    return NIL;
+    lyra_panic("apply: not callable: %s", utstring_body(repr(gc, fn)));
 }
 
 Value *intrinsic_gensym(GC *gc, Closure *closure, Value *args) {
@@ -582,7 +564,7 @@ Value *intrinsic_expand_macro(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_cons(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-cons", args, 1);
     Value *val = list_head(args);
     return val->type == CONS ? TRUE : FALSE;
 }
@@ -590,7 +572,7 @@ Value *intrinsic_is_cons(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_int(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-int", args, 1);
     Value *val = list_head(args);
     return val->type == INT ? TRUE : FALSE;
 }
@@ -598,7 +580,7 @@ Value *intrinsic_is_int(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_float(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-float", args, 1);
     Value *val = list_head(args);
     return val->type == FLOAT ? TRUE : FALSE;
 }
@@ -606,7 +588,7 @@ Value *intrinsic_is_float(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_boolean(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-boolean", args, 1);
     Value *val = list_head(args);
     return val->type == BOOLEAN ? TRUE : FALSE;
 }
@@ -614,7 +596,7 @@ Value *intrinsic_is_boolean(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_string(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-string", args, 1);
     Value *val = list_head(args);
     return val->type == STRING ? TRUE : FALSE;
 }
@@ -622,7 +604,7 @@ Value *intrinsic_is_string(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_symbol(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-symbol", args, 1);
     Value *val = list_head(args);
     return val->type == SYMBOL ? TRUE : FALSE;
 }
@@ -630,7 +612,7 @@ Value *intrinsic_is_symbol(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_function(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-function", args, 1);
     Value *val = list_head(args);
     return val->type == FUNCTION ? TRUE : FALSE;
 }
@@ -638,7 +620,7 @@ Value *intrinsic_is_function(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_macro(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-macro", args, 1);
     Value *val = list_head(args);
     return val->type == MACRO ? TRUE : FALSE;
 }
@@ -646,7 +628,7 @@ Value *intrinsic_is_macro(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_is_nil(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    if (is_nil(args)) return FALSE;
+    expect_arity("is-nil", args, 1);
     Value *val = list_head(args);
     return is_nil(val) ? TRUE : FALSE;
 }

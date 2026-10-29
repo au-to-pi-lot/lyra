@@ -48,15 +48,31 @@ void assign_args(GC *gc, Closure *closure, Value *params, Value *args) {
     }
 #endif
 
-    while (!is_nil(params) && !is_nil(args_iter)) {
+    bool has_variadic = false;
+    int expected = 0;
+    for (Value *p = params; !is_nil(p); p = list_tail(p)) {
+        if (list_head(p)->type == VARIADIC_MARKER) {
+            has_variadic = true;
+        } else {
+            expected++;
+        }
+    }
+
+    while (!is_nil(params) && (!is_nil(args_iter) || list_head(params)->type == VARIADIC_MARKER)) {
         Value *param = list_head(params);
 
         if (param->type == CONS) {
             // Destructuring assignment
-            assign_args(gc, closure, param, list_head(args_iter));
+            Value *sub_args = list_head(args_iter);
+            if (sub_args->type != CONS) {
+                lyra_panic("cannot destructure %s: expected a list", utstring_body(repr(gc, sub_args)));
+            }
+            assign_args(gc, closure, param, sub_args);
         } else if (param->type == VARIADIC_MARKER) {
-            // Variadic assignment
+            // Variadic assignment: takes whatever is left (possibly nothing)
             set_var(gc, closure, param->data.as_symbol, args_iter);
+            params = NIL;
+            args_iter = NIL;
             break;
         } else {
             // Assumed that param->type == SYMBOL
@@ -66,6 +82,13 @@ void assign_args(GC *gc, Closure *closure, Value *params, Value *args) {
 
         params = list_tail(params);
         args_iter = list_tail(args_iter);
+    }
+
+    // Anything left over (or a variadic taking the rest) means the counts
+    // didn't line up.
+    if (!is_nil(params) || !is_nil(args_iter)) {
+        lyra_panic("wrong number of arguments: expected %s%d, but got %d",
+                   has_variadic ? "at least " : "", expected, list_length(args));
     }
 }
 
