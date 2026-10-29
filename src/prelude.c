@@ -70,7 +70,8 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function_pure(gc, closure, "apply", &intrinsic_apply, false);
 
     // Impure functions (side effects)
-    define_intrinsic_function_pure(gc, closure, "gensym", &intrinsic_gensym, false);  // Mutates GC counter
+    define_intrinsic_function_pure(gc, closure, "gensym", &intrinsic_gensym, false);  // Fresh identity each call
+    define_intrinsic_function_pure(gc, closure, "unique", &intrinsic_unique, false);  // Fresh identity each call
     // Runs the macro body, so purity depends on the macro; conservatively impure
     define_intrinsic_function_pure(gc, closure, "expand-macro-1", &intrinsic_expand_macro_1, false);
     define_intrinsic_function_pure(gc, closure, "expand-macro", &intrinsic_expand_macro, false);
