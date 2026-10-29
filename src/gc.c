@@ -1,6 +1,7 @@
 #include "gc.h"
 #include <stdlib.h>
 #include <string.h>
+#include "types/list.h"
 
 #define GC_INITIAL_THRESHOLD 1000
 
@@ -38,6 +39,10 @@ Value *gc_alloc_value(GC *gc, ValueType type, ValueData data) {
 
 Cons *gc_alloc_cons(GC *gc) {
     Cons *cons = malloc(sizeof(Cons));
+    // Start as (nil . nil) so a cons whose car is still being computed when
+    // a panic unwinds never holds garbage pointers.
+    cons->car = NIL;
+    cons->cdr = NIL;
     gc_register(gc, cons, sizeof(Cons), GC_CONS);
     return cons;
 }
@@ -109,6 +114,7 @@ void gc_mark_from_value(GC *gc, Value *value) {
             gc_mark_object(gc, value->data.as_string);
             break;
         case SYMBOL:
+        case VARIADIC_MARKER:  // a `*name` parameter; holds its name like a symbol
             gc_mark_object(gc, value->data.as_symbol);
             break;
         case FUNCTION:

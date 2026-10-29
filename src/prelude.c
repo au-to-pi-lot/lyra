@@ -78,6 +78,8 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function_pure(gc, closure, "eval-string", &intrinsic_eval_string, false);  // Dynamic evaluation
     define_intrinsic_function_pure(gc, closure, "print", &intrinsic_print, false);  // Writes to stdout, with newline
     define_intrinsic_function_pure(gc, closure, "write", &intrinsic_write, false);  // Writes to stdout, no newline
+    define_intrinsic_function_pure(gc, closure, "panic", &intrinsic_panic, false);  // Aborts evaluation
+    define_intrinsic_function_pure(gc, closure, "panic-with-status", &intrinsic_panic_with_status, false);
     define_intrinsic_function_pure(gc, closure, "get-var", &intrinsic_get_var, true);  // Just reads
     define_intrinsic_function_pure(gc, closure, "is-pure", &intrinsic_pure_p, true);  // Purity query
 

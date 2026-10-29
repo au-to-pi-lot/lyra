@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include "../src/call.h"
 #include "../src/repr.h"
+#include "../src/panic.h"
+#include <stdbool.h>
 
 // Helper to parse and evaluate
 static Value* eval_string(GC *gc, Closure *closure, const char *input) {
@@ -18,6 +20,36 @@ static Value* eval_string(GC *gc, Closure *closure, const char *input) {
     if (!parsed) return NULL;
     return eval_s_expr(gc, closure, parsed);
 }
+
+// Parse and evaluate `input`, catching a panic instead of letting it reach
+// the default handler (which would exit the test process). Returns true if
+// evaluation panicked; the message is then available from panic_message().
+// On success, *result (may be NULL) receives the value.
+//
+// Keep ck_assert calls out of the protected region: in Check's no-fork mode
+// (Windows) a failed assertion longjmps too, and would skip panic_pop.
+static bool eval_panics(GC *gc, Closure *closure, const char *input, Value **result) {
+    Value *parsed = parse(gc, input);
+    ck_assert_msg(parsed != NULL, "parse failed: %s", input);
+
+    PanicHandler handler;
+    panic_push(&handler);
+    if (setjmp(handler.env) == 0) {
+        Value *value = eval_s_expr(gc, closure, parsed);
+        panic_pop(&handler);
+        if (result) *result = value;
+        return false;
+    }
+    return true;
+}
+
+// Assert that evaluating `input` panics with exactly `expected` as its message.
+#define ck_assert_panics(gc, closure, input, expected)                         \
+    do {                                                                       \
+        bool panicked_ = eval_panics((gc), (closure), (input), NULL);          \
+        ck_assert_msg(panicked_, "expected a panic from: %s", (input));        \
+        ck_assert_str_eq(panic_message(), (expected));                         \
+    } while (0)
 
 START_TEST(test_prelude)
 {
@@ -925,7 +957,7 @@ START_TEST(test_macroexpand_1_let)
     ck_assert(expanded);
 
     // Expansion-time defines in let's body (vars, vals) must not leak into the caller
-    ck_assert_ptr_null(eval_string(&gc, closure, "vars"));
+    ck_assert_panics(&gc, closure, "vars", "undefined variable: `vars`");
 
     gc_free_all(&gc);
 }
@@ -944,7 +976,7 @@ START_TEST(test_macroexpand_does_not_evaluate)
     ck_assert(expanded);
 
     // The expansion is a `define`, but it was never evaluated
-    ck_assert_ptr_null(eval_string(&gc, closure, "sq"));
+    ck_assert_panics(&gc, closure, "sq", "undefined variable: `sq`");
 
     gc_free_all(&gc);
 }
@@ -1137,7 +1169,7 @@ START_TEST(test_expand_macro_intrinsic)
     // Stops at a special form, and the expansion is never evaluated
     ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(fn sq (n) (* n n)))"),
                      "(define sq (Z (lambda (sq) (lambda (n) (* n n)))))");
-    ck_assert_ptr_null(eval_string(&gc, closure, "sq"));
+    ck_assert_panics(&gc, closure, "sq", "undefined variable: `sq`");
 
     gc_free_all(&gc);
 }
@@ -2019,13 +2051,14 @@ START_TEST(test_print)
     eval_string(&gc, closure, "(write \" world\")");
     eval_string(&gc, closure, "(write \"a\" \"b\" \"c\")");
     eval_string(&gc, closure, "(write)");
-    eval_string(&gc, closure, "(write \"x\" 42)");  // all-or-nothing: writes nothing
-    eval_string(&gc, closure, "(write 42)");  // error path writes nothing to the stream
+    // Non-string arguments are type errors: panic, all-or-nothing (writes nothing)
+    ck_assert_panics(&gc, closure, "(write \"x\" 42)", "write requires string arguments");
+    ck_assert_panics(&gc, closure, "(write 42)", "write requires string arguments");
 
     // print adds a newline; (print) is just a newline; errors write nothing
     eval_string(&gc, closure, "(print \"p\" \"q\")");
     eval_string(&gc, closure, "(print)");
-    eval_string(&gc, closure, "(print 1)");
+    ck_assert_panics(&gc, closure, "(print 1)", "print requires string arguments");
 
     intrinsic_set_print_stream(NULL);
     rewind(tmp);
@@ -2046,6 +2079,195 @@ START_TEST(test_print)
 }
 END_TEST
 
+START_TEST(test_panic_intrinsic)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(panic \"boom\")", "boom");
+    // Variadic like print: strings are concatenated with no separator
+    ck_assert_panics(&gc, closure, "(panic \"bad value: \" (string 42))", "bad value: 42");
+    ck_assert_panics(&gc, closure, "(panic)", "");
+    // No implicit conversion
+    ck_assert_panics(&gc, closure, "(panic 42)", "panic requires string arguments");
+
+    // A panic deep inside nested calls unwinds all the way out
+    eval_string(&gc, closure, "(define f (lambda (x) (if (= x 0) (panic \"bottom\") (f (- x 1)))))");
+    ck_assert_panics(&gc, closure, "(+ 1 (f 50))", "bottom");
+
+    // Plain panics request the default exit status
+    ck_assert_panics(&gc, closure, "(panic \"x\")", "x");
+    ck_assert_int_eq(panic_exit_status(), 1);
+
+    Value *result = eval_string(&gc, closure, "(is-pure panic)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(result->data.as_boolean == false);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_panic_with_status)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(panic-with-status 3 \"bad \" \"config\")", "bad config");
+    ck_assert_int_eq(panic_exit_status(), 3);
+    ck_assert_panics(&gc, closure, "(panic-with-status 255)", "");
+    ck_assert_int_eq(panic_exit_status(), 255);
+
+    // A later plain panic goes back to the default status
+    ck_assert_panics(&gc, closure, "(panic \"again\")", "again");
+    ck_assert_int_eq(panic_exit_status(), 1);
+
+    // Argument errors are ordinary panics (status 1)
+    ck_assert_panics(&gc, closure, "(panic-with-status)", "panic-with-status requires an exit status");
+    ck_assert_panics(&gc, closure, "(panic-with-status \"oops\")",
+                     "panic-with-status requires an int exit status, got \"oops\"");
+    ck_assert_panics(&gc, closure, "(panic-with-status 0 \"ok?\")",
+                     "panic-with-status exit status must be between 1 and 255, got 0");
+    ck_assert_panics(&gc, closure, "(panic-with-status 256)",
+                     "panic-with-status exit status must be between 1 and 255, got 256");
+    ck_assert_panics(&gc, closure, "(panic-with-status 2 42)", "panic-with-status requires string arguments");
+    ck_assert_int_eq(panic_exit_status(), 1);
+
+    Value *result = eval_string(&gc, closure, "(is-pure panic-with-status)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(result->data.as_boolean == false);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_panic_programmer_errors)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // Undefined variables
+    ck_assert_panics(&gc, closure, "nope", "undefined variable: `nope`");
+    ck_assert_panics(&gc, closure, "(+ 1 nope)", "undefined variable: `nope`");
+    ck_assert_panics(&gc, closure, "(nope 1 2)", "undefined variable used as function/macro: `nope`");
+
+    // Calling something that isn't callable
+    eval_string(&gc, closure, "(define five 5)");
+    ck_assert_panics(&gc, closure, "(five 1)", "not callable: 5");
+    ck_assert_panics(&gc, closure, "((car '(1 2)) 3)", "not callable: 1");
+    ck_assert_panics(&gc, closure, "(1 2)", "not callable: 1");
+    ck_assert_panics(&gc, closure, "(\"s\" 2)", "not callable: \"s\"");
+
+    // Arity and type errors in intrinsics
+    ck_assert_panics(&gc, closure, "(not)", "not expects exactly one argument, but got 0");
+    ck_assert_panics(&gc, closure, "(get-var 42)", "get-var requires a symbol argument");
+    ck_assert_panics(&gc, closure, "(symbol 42)", "symbol: cannot convert 42 to a symbol");
+    ck_assert_panics(&gc, closure, "(string '(1))", "string: cannot convert (1) to a string");
+    ck_assert_panics(&gc, closure, "(string \"a\" 1)", "string: multiple arguments must all be strings");
+    ck_assert_panics(&gc, closure, "(is-pure 1)", "is-pure requires a function or macro argument");
+    ck_assert_panics(&gc, closure, "(expand-macro-1)",
+                     "expand-macro-1 requires exactly one argument (a quoted form)");
+    ck_assert_panics(&gc, closure, "(load-file 42)", "load-file requires a string filename");
+    ck_assert_panics(&gc, closure, "(define-macro m 5)", "define-macro requires a function");
+    ck_assert_panics(&gc, closure, "(lambda (*xs y) xs)", "variadic parameter *xs must be the last parameter");
+    ck_assert_panics(&gc, closure, "(lambda (1) 1)", "invalid parameter: 1");
+    ck_assert_panics(&gc, closure, "(match 3 (1 'one) (2 'two))", "match: no pattern matched 3");
+    ck_assert_panics(&gc, closure, "`(a ,@(list))", "undefined variable used as function/macro: `list`");
+
+    // eval-string: parse errors panic, and panics inside the evaluated code propagate
+    ck_assert_panics(&gc, closure, "(eval-string \"(+ 1\")", "eval-string: parse error");
+    ck_assert_panics(&gc, closure, "(eval-string \"(panic \\\"inner\\\")\")", "inner");
+    ck_assert_panics(&gc, closure, "(eval-string 1)", "eval-string requires a string argument");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_panic_io_failures_are_not_panics)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // I/O failures will become err results in a later task; for now they
+    // still report and return nil rather than panicking.
+    Value *result = NULL;
+    ck_assert(!eval_panics(&gc, closure, "(load-file \"no/such/file.lyra\")", &result));
+    ck_assert_ptr_nonnull(result);
+    ck_assert(is_nil(result));
+
+    result = NULL;
+    ck_assert(!eval_panics(&gc, closure, "(list-directory \"no/such/dir\")", &result));
+    ck_assert_ptr_nonnull(result);
+    ck_assert(is_nil(result));
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+// Catch a panic in an inner handler, then raise a new one that must reach the
+// outer handler. Returns true if it did.
+static bool nested_panic_reaches_outer(GC *gc, Closure *closure) {
+    PanicHandler outer;
+    panic_push(&outer);
+    if (setjmp(outer.env) != 0) {
+        return true;
+    }
+    if (eval_panics(gc, closure, "(panic \"inner\")", NULL)) {
+        lyra_panic("outer");
+    }
+    panic_pop(&outer);
+    return false;
+}
+
+START_TEST(test_panic_session_survives)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define x 10)");
+
+    // Definitions that completed before the panic are kept; nothing is rolled back
+    ck_assert_panics(&gc, closure, "(begin (define y 20) (panic \"stop\") (define z 30))", "stop");
+    Value *result = eval_string(&gc, closure, "(+ x y)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->data.as_int, 30);
+    ck_assert_panics(&gc, closure, "z", "undefined variable: `z`");
+
+    // Panic in the middle of building an argument list and a quasiquote,
+    // then collect: the half-built, now-unreachable cells must be safe to sweep
+    ck_assert_panics(&gc, closure, "(+ 1 2 (panic \"mid-args\") 4)", "mid-args");
+    ck_assert_panics(&gc, closure, "`(1 2 ,(panic \"mid-qq\") 4)", "mid-qq");
+    ck_assert_panics(&gc, closure, "(map (lambda (n) (if (= n 3) (panic \"in map\") n)) '(1 2 3 4))",
+                     "in map");
+    gc_collect(&gc, closure);
+
+    // The interpreter still works normally afterwards
+    result = eval_string(&gc, closure, "(map (lambda (n) (* n x)) '(1 2 3))");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(list_length(result), 3);
+    ck_assert_int_eq(list_index(result, 2)->data.as_int, 30);
+
+    // Handlers nest: an inner caught panic doesn't disturb an outer handler,
+    // and once both are popped a successful evaluation needs no handler at all
+    ck_assert(nested_panic_reaches_outer(&gc, closure));
+    ck_assert_str_eq(panic_message(), "outer");
+    result = eval_string(&gc, closure, "(+ 1 1)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->data.as_int, 2);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 Suite *eval_suite(void)
 {
     Suite *s;
@@ -2057,6 +2279,11 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_prelude);
     tcase_add_test(tc_core, test_eval_integer);
     tcase_add_test(tc_core, test_print);
+    tcase_add_test(tc_core, test_panic_intrinsic);
+    tcase_add_test(tc_core, test_panic_with_status);
+    tcase_add_test(tc_core, test_panic_programmer_errors);
+    tcase_add_test(tc_core, test_panic_io_failures_are_not_panics);
+    tcase_add_test(tc_core, test_panic_session_survives);
     tcase_add_test(tc_core, test_eval_float);
     tcase_add_test(tc_core, test_eval_string);
     tcase_add_test(tc_core, test_eval_add);

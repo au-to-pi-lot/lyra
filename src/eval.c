@@ -3,6 +3,8 @@
 #include "types/list.h"
 #include <stdio.h>
 #include "parser.h"
+#include "panic.h"
+#include "repr.h"
 
 // Enable debug output with -DDEBUG_QUASIQUOTE
 #ifdef DEBUG_QUASIQUOTE
@@ -80,8 +82,7 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
     // Check if this is an unquote-splicing form: (unquote-splicing xs)
     // This is handled by the parent, so we shouldn't see it here at the top level
     if (head->type == SYMBOL && strcmp(utstring_body(head->data.as_symbol), "unquote-splicing") == 0) {
-        printf("unquote-splicing not in list context\n");
-        return NULL;
+        lyra_panic("unquote-splicing used outside a list");
     }
 
     // Otherwise, we need to process this list recursively
@@ -126,6 +127,18 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
     return list_reverse(gc, result);
 }
 
+// Call `value` (the evaluated head of `expr`) with the rest of `expr`:
+// evaluated arguments for a function, unevaluated ones for a macro.
+// Panics if `value` isn't callable.
+static Value *apply_callable(GC *gc, Closure *closure, Value *value, Value *expr) {
+    if (value->type == FUNCTION) {
+        return call(gc, closure, value->data.as_function, eval_args(gc, closure, list_tail(expr)));
+    } else if (value->type == MACRO) {
+        return call(gc, closure, value->data.as_macro, list_tail(expr));
+    }
+    lyra_panic("not callable: %s", utstring_body(repr(gc, value)));
+}
+
 Value *eval_s_expr(GC *gc, Closure *closure, Value *expr) {
     switch (expr->type) {
         case CONS:
@@ -148,34 +161,26 @@ Value *eval_s_expr(GC *gc, Closure *closure, Value *expr) {
                 // Normal function/macro lookup
                 Value *value = get_var(closure, head->data.as_symbol);
                 if (value == NULL) {
-                    printf("Undefined variable used as function/macro: `%s`\n", utstring_body(head->data.as_symbol));
-                    return NULL;
-                } else if (value->type == FUNCTION) {
-                    return call(gc, closure, value->data.as_function, eval_args(gc, closure, list_tail(expr)));
-                } else if (value->type == MACRO) {
-                    return call(gc, closure, value->data.as_macro, list_tail(expr));
-                } else {
-                    // TODO
+                    lyra_panic("undefined variable used as function/macro: `%s`",
+                               utstring_body(head->data.as_symbol));
                 }
+                return apply_callable(gc, closure, value, expr);
             } else if (head->type == CONS) {
                 Value *value = eval_s_expr(gc, closure, head);
                 if (value == NULL) {
-                    printf("Cannot eval subexpression");
-                    return NULL;
-                } else if (value->type == FUNCTION) {
-                    return call(gc, closure, value->data.as_function, eval_args(gc, closure, list_tail(expr)));
-                } else if (value->type == MACRO) {
-                    return call(gc, closure, value->data.as_macro, list_tail(expr));
-                } else {
-                    // TODO
+                    lyra_panic("call head evaluated to no value: %s", utstring_body(repr(gc, head)));
                 }
+                return apply_callable(gc, closure, value, expr);
             } else {
-                printf("Cannot be called as function/macro: `%s`\n", utstring_body(head->data.as_symbol));
-                return NULL;
+                lyra_panic("not callable: %s", utstring_body(repr(gc, head)));
             }
-            return NULL;
-        case SYMBOL:
-            return get_var(closure, expr->data.as_symbol);
+        case SYMBOL: {
+            Value *value = get_var(closure, expr->data.as_symbol);
+            if (value == NULL) {
+                lyra_panic("undefined variable: `%s`", utstring_body(expr->data.as_symbol));
+            }
+            return value;
+        }
         case INT:
         case FLOAT: 
         case STRING:
