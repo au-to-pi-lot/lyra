@@ -36,6 +36,8 @@ Value *intrinsic_apply(GC *gc, Closure *closure, Value *args);
 
 // Symbol generation
 Value *intrinsic_gensym(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_expand_macro_1(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_expand_macro(GC *gc, Closure *closure, Value *args);
 
 // Type predicates
 Value *intrinsic_is_cons(GC *gc, Closure *closure, Value *args);

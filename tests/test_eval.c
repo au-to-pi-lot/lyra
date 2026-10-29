@@ -1029,6 +1029,106 @@ START_TEST(test_macroexpand_resolves_in_caller_closure)
 }
 END_TEST
 
+// --- expand-macro / expand-macro-1 intrinsics (Lyra-level) ---
+
+static const char *eval_repr(GC *gc, Closure *closure, const char *src) {
+    Value *result = eval_string(gc, closure, src);
+    ck_assert_ptr_nonnull(result);
+    return utstring_body(repr(gc, result));
+}
+
+START_TEST(test_expand_macro_1_intrinsic)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 '(let ((x 1) (y 2)) (+ x y)))"),
+                     "((lambda (x y) (+ x y)) 1 2)");
+
+    eval_string(&gc, closure, "(define-macro inc (lambda (x) `(+ ,x 1)))");
+    eval_string(&gc, closure, "(define-macro inc-via (lambda (x) `(inc ,x)))");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 '(inc-via 5))"), "(inc 5)");
+    // Composes: it's a function, so its result can be fed back in
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 (expand-macro-1 '(inc-via 5)))"), "(+ 5 1)");
+    // ...and the form can be computed rather than literal
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 (cons 'inc '(7)))"), "(+ 7 1)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_expand_macro_intrinsic)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define-macro inc (lambda (x) `(+ ,x 1)))");
+    eval_string(&gc, closure, "(define-macro inc-via (lambda (x) `(inc ,x)))");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(inc-via 5))"), "(+ 5 1)");
+
+    // Head-only: a macro call in a subform is left alone
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(+ (inc 1) 2))"), "(+ (inc 1) 2)");
+
+    // Stops at a special form, and the expansion is never evaluated
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(fn sq (n) (* n n)))"),
+                     "(define sq (Z (lambda (sq) (lambda (n) (* n n)))))");
+    ck_assert_ptr_null(eval_string(&gc, closure, "sq"));
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_expand_macro_non_macro_unchanged)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(if true 1 2))"), "(if true 1 2)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 '(lambda (x) x))"), "(lambda (x) x)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(+ 1 2))"), "(+ 1 2)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro '(nope 1))"), "(nope 1)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro 42)"), "42");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 'foo)"), "foo");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_expand_macro_shows_gensym_and_is_impure)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure,
+        "(define-macro safe-double (lambda (x) "
+        "  (define tmp-sym (gensym)) "
+        "  `(let ((,tmp-sym ,x)) (+ ,tmp-sym ,tmp-sym))))");
+
+    // The hygiene machinery is visible in the expansion
+    ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 '(safe-double 21))"),
+                     "(let ((G__0 21)) (+ G__0 G__0))");
+    // ...and expanding really ran the body: the gensym counter moved
+    ck_assert_str_eq(eval_repr(&gc, closure, "(gensym)"), "G__1");
+
+    Value *pure = eval_string(&gc, closure, "(is-pure expand-macro)");
+    ck_assert_ptr_nonnull(pure);
+    ck_assert_int_eq(pure->data.as_boolean, false);
+    pure = eval_string(&gc, closure, "(is-pure expand-macro-1)");
+    ck_assert_ptr_nonnull(pure);
+    ck_assert_int_eq(pure->data.as_boolean, false);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 START_TEST(test_not)
 {
     GC gc;
@@ -1944,6 +2044,10 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_macroexpand_1_leaves_non_macro_forms);
     tcase_add_test(tc_core, test_macroexpand_repeats_at_head);
     tcase_add_test(tc_core, test_macroexpand_resolves_in_caller_closure);
+    tcase_add_test(tc_core, test_expand_macro_1_intrinsic);
+    tcase_add_test(tc_core, test_expand_macro_intrinsic);
+    tcase_add_test(tc_core, test_expand_macro_non_macro_unchanged);
+    tcase_add_test(tc_core, test_expand_macro_shows_gensym_and_is_impure);
     tcase_add_test(tc_core, test_not);
     tcase_add_test(tc_core, test_and_short_circuit);
     tcase_add_test(tc_core, test_or_short_circuit);

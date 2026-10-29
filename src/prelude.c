@@ -71,6 +71,9 @@ void prelude(GC *gc, Closure *closure) {
 
     // Impure functions (side effects)
     define_intrinsic_function_pure(gc, closure, "gensym", &intrinsic_gensym, false);  // Mutates GC counter
+    // Runs the macro body, so purity depends on the macro; conservatively impure
+    define_intrinsic_function_pure(gc, closure, "expand-macro-1", &intrinsic_expand_macro_1, false);
+    define_intrinsic_function_pure(gc, closure, "expand-macro", &intrinsic_expand_macro, false);
     define_intrinsic_function_pure(gc, closure, "load-file", &intrinsic_load_file, false);  // File I/O
     define_intrinsic_function_pure(gc, closure, "eval-string", &intrinsic_eval_string, false);  // Dynamic evaluation
     define_intrinsic_function_pure(gc, closure, "print", &intrinsic_print, false);  // Writes to stdout, with newline

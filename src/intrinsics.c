@@ -566,6 +566,27 @@ Value *intrinsic_gensym(GC *gc, Closure *closure, Value *args) {
     return make_symbol(gc, name);
 }
 
+// (expand-macro-1 form) / (expand-macro form): expand without evaluating.
+// The macro head is resolved in the caller's closure. Non-macro forms,
+// including special forms, come back unchanged. Impure: expanding runs the
+// macro's body, which may do anything (e.g. gensym). Strictly, purity depends
+// on the macro being expanded; we conservatively call it impure.
+Value *intrinsic_expand_macro_1(GC *gc, Closure *closure, Value *args) {
+    if (list_length(args) != 1) {
+        printf("expand-macro-1 requires exactly one argument (a quoted form)\n");
+        return NIL;
+    }
+    return macroexpand_1(gc, closure, list_head(args), NULL);
+}
+
+Value *intrinsic_expand_macro(GC *gc, Closure *closure, Value *args) {
+    if (list_length(args) != 1) {
+        printf("expand-macro requires exactly one argument (a quoted form)\n");
+        return NIL;
+    }
+    return macroexpand(gc, closure, list_head(args), NULL);
+}
+
 // Type predicates
 Value *intrinsic_is_cons(GC *gc, Closure *closure, Value *args) {
     (void)gc;
