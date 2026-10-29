@@ -2,6 +2,7 @@
 #include "types/value.h"
 #include "types/list.h"
 
+
 static UT_string *repr_internal(Value *val, UT_string *out);
 
 UT_string *repr_string(UT_string *s, UT_string *out) {
@@ -58,10 +59,13 @@ static UT_string *repr_internal(Value *val, UT_string *out) {
             utstring_printf(out, "%d", val->data.as_int);
             break;
         case FLOAT:
-            if (val->data.as_float == (int)val->data.as_float) {
-                printf("%.1f", val->data.as_float);  // Prints "3.0"
+            // Whole numbers keep a ".0" so floats stay distinguishable from ints.
+            // (The range check also keeps the comparison away from NaN/inf and
+            // from values too large for an int, where the old cast was UB.)
+            if (val->data.as_float > -1e9f && val->data.as_float < 1e9f && val->data.as_float == (float)(long long)val->data.as_float) {
+                utstring_printf(out, "%.1f", val->data.as_float);  // "3.0"
             } else {
-                printf("%g", val->data.as_float);     // Prints "3.14159" (strips trailing zeros)
+                utstring_printf(out, "%g", val->data.as_float);    // "3.14159" (strips trailing zeros)
             }
             break;
         case STRING:

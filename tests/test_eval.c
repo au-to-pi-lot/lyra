@@ -2188,6 +2188,186 @@ START_TEST(test_panic_programmer_errors)
 }
 END_TEST
 
+START_TEST(test_loud_list_ops)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(car 5)", "car expects a list, but got 5");
+    ck_assert_panics(&gc, closure, "(cdr \"s\")", "cdr expects a list, but got \"s\"");
+    ck_assert_panics(&gc, closure, "(car)", "car expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(car '(1) '(2))", "car expects exactly 1 argument, but got 2");
+    ck_assert_panics(&gc, closure, "(cdr)", "cdr expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(cons 1)", "cons expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(cons 1 2)", "cons expects a list, but got 2");
+    ck_assert_panics(&gc, closure, "(apply car)", "apply expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(apply car 5)", "apply expects a list, but got 5");
+    ck_assert_panics(&gc, closure, "(apply 5 '(1))", "apply: not callable: 5");
+
+    // car/cdr of nil stay nil
+    ck_assert_str_eq(eval_repr(&gc, closure, "(car nil)"), "()");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(cdr '())"), "()");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_loud_arithmetic)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(+ 1 \"a\")", "+ expects numbers, but got \"a\"");
+    ck_assert_panics(&gc, closure, "(+ 'x 1)", "+ expects numbers, but got x");
+    ck_assert_panics(&gc, closure, "(- \"a\")", "- expects numbers, but got \"a\"");
+    ck_assert_panics(&gc, closure, "(- 5 nil)", "- expects numbers, but got ()");
+    ck_assert_panics(&gc, closure, "(* 2 true)", "* expects numbers, but got true");
+    ck_assert_panics(&gc, closure, "(/ 1 \"a\")", "/ expects numbers, but got \"a\"");
+    ck_assert_panics(&gc, closure, "(/ \"a\" 1)", "/ expects numbers, but got \"a\"");
+
+    // Division by zero
+    ck_assert_panics(&gc, closure, "(/ 1 0)", "division by zero");
+    ck_assert_panics(&gc, closure, "(/ 1 0.0)", "division by zero");
+    ck_assert_panics(&gc, closure, "(divmod 7 0)", "division by zero");
+
+    // divmod arity and types
+    ck_assert_panics(&gc, closure, "(divmod 1)", "divmod expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(divmod 1 2 3)", "divmod expects exactly 2 arguments, but got 3");
+    ck_assert_panics(&gc, closure, "(divmod 1 2.0)", "divmod expects integers, but got 1 and 2.0");
+    ck_assert_panics(&gc, closure, "(divmod \"a\" 2)", "divmod expects integers, but got \"a\" and 2");
+
+    // Valid uses are unchanged, including int/float promotion
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 1 2 3)"), "6");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 1 2.5)"), "3.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- 10 3 2)"), "5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- 5.5 1)"), "4.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(* 2 3 4)"), "24");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(/ 7 2)"), "3.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod 7 2)"), "(3 1)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_loud_comparison)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(=)", "= expects exactly 2 arguments, but got 0");
+    ck_assert_panics(&gc, closure, "(= 1)", "= expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(= 1 2 3)", "= expects exactly 2 arguments, but got 3");
+    ck_assert_panics(&gc, closure, "(< 1)", "< expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(<= 1 2 3)", "<= expects exactly 2 arguments, but got 3");
+    ck_assert_panics(&gc, closure, "(> 1)", "> expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(>=)", ">= expects exactly 2 arguments, but got 0");
+    ck_assert_panics(&gc, closure, "(< 1 \"a\")", "< expects numbers, but got \"a\"");
+    ck_assert_panics(&gc, closure, "(> \"a\" \"b\")", "> expects numbers, but got \"a\"");
+    ck_assert_panics(&gc, closure, "(< 1 2.0)", "< cannot compare 1 and 2.0: mixed int and float");
+
+    // = across different types is simply false (not an error)
+    ck_assert_str_eq(eval_repr(&gc, closure, "(= 1 \"a\")"), "false");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(= 1 1.0)"), "false");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(< 1 2)"), "true");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(>= 2.5 2.5)"), "true");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_loud_eval_and_special_forms)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // () is nil, and evaluates to itself
+    Value *result = eval_string(&gc, closure, "()");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(is_nil(result));
+    ck_assert_panics(&gc, closure, "(())", "not callable: ()");
+
+    // Special forms
+    ck_assert_panics(&gc, closure, "(quote)", "quote expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(quote a b)", "quote expects exactly 1 argument, but got 2");
+    ck_assert_panics(&gc, closure, "(quasiquote)", "quasiquote expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "`(a (unquote))", "unquote expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "`(a (unquote-splicing))",
+                     "unquote-splicing expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "`(a ,@5)", "unquote-splicing expects a list, but got 5");
+    ck_assert_panics(&gc, closure, "(if)",
+                     "if expects a condition, a then-branch and an optional else-branch, but got 0 arguments");
+    ck_assert_panics(&gc, closure, "(if true)",
+                     "if expects a condition, a then-branch and an optional else-branch, but got 1 arguments");
+    ck_assert_panics(&gc, closure, "(if true 1 2 3)",
+                     "if expects a condition, a then-branch and an optional else-branch, but got 4 arguments");
+    ck_assert_panics(&gc, closure, "(define)", "define expects exactly 2 arguments, but got 0");
+    ck_assert_panics(&gc, closure, "(define x)", "define expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(define 5 1)", "define expects a symbol as its name, but got 5");
+    ck_assert_panics(&gc, closure, "(define-macro m)", "define-macro expects exactly 2 arguments, but got 1");
+    ck_assert_panics(&gc, closure, "(lambda)", "lambda expects a parameter list");
+
+    // Type predicates take exactly one argument
+    ck_assert_panics(&gc, closure, "(is-int)", "is-int expects exactly 1 argument, but got 0");
+    ck_assert_panics(&gc, closure, "(is-nil 1 2)", "is-nil expects exactly 1 argument, but got 2");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_loud_call_arity)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define add (lambda (a b) (+ a b)))");
+    ck_assert_panics(&gc, closure, "(add 1)", "wrong number of arguments: expected 2, but got 1");
+    ck_assert_panics(&gc, closure, "(add 1 2 3)", "wrong number of arguments: expected 2, but got 3");
+    ck_assert_panics(&gc, closure, "((lambda (x) x))", "wrong number of arguments: expected 1, but got 0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(add 1 2)"), "3");
+
+    // Variadics: a required prefix, then anything (including nothing)
+    eval_string(&gc, closure, "(define rest (lambda (a *xs) xs))");
+    ck_assert_panics(&gc, closure, "(rest)", "wrong number of arguments: expected at least 1, but got 0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(rest 1)"), "()");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(rest 1 2 3)"), "(2 3)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "((lambda (*xs) xs))"), "()");
+
+    // Destructuring
+    eval_string(&gc, closure, "(define d (lambda ((a b)) (+ a b)))");
+    ck_assert_panics(&gc, closure, "(d 5)", "cannot destructure 5: expected a list");
+    ck_assert_panics(&gc, closure, "(d '(1))", "wrong number of arguments: expected 2, but got 1");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_repr_float_writes_into_string)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // repr of a float used to print straight to stdout and return an empty string
+    ck_assert_str_eq(eval_repr(&gc, closure, "3.0"), "3.0");
+    ck_assert_str_eq(eval_repr(&gc, closure, "3.14159"), "3.14159");
+    ck_assert_str_eq(eval_repr(&gc, closure, "-2.5"), "-2.5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "'(1 2.5 \"x\" 4.0)"), "(1 2.5 \"x\" 4.0)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 START_TEST(test_panic_io_failures_are_not_panics)
 {
     GC gc;
@@ -2282,6 +2462,12 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_panic_intrinsic);
     tcase_add_test(tc_core, test_panic_with_status);
     tcase_add_test(tc_core, test_panic_programmer_errors);
+    tcase_add_test(tc_core, test_loud_list_ops);
+    tcase_add_test(tc_core, test_loud_arithmetic);
+    tcase_add_test(tc_core, test_loud_comparison);
+    tcase_add_test(tc_core, test_loud_eval_and_special_forms);
+    tcase_add_test(tc_core, test_loud_call_arity);
+    tcase_add_test(tc_core, test_repr_float_writes_into_string);
     tcase_add_test(tc_core, test_panic_io_failures_are_not_panics);
     tcase_add_test(tc_core, test_panic_session_survives);
     tcase_add_test(tc_core, test_eval_float);

@@ -70,10 +70,10 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
     if (head->type == SYMBOL && strcmp(utstring_body(head->data.as_symbol), "unquote") == 0) {
         DEBUG_QQ_PRINT("DEBUG QQ: Found unquote\n");
         // Evaluate the unquoted expression
-        Value *unquoted_expr = list_index(expr, 1);
-        if (unquoted_expr == NULL || is_nil(unquoted_expr)) {
-            return NULL;
+        if (list_length(expr) != 2) {
+            lyra_panic("unquote expects exactly 1 argument, but got %d", list_length(expr) - 1);
         }
+        Value *unquoted_expr = list_index(expr, 1);
         Value *result = eval_s_expr(gc, closure, unquoted_expr);
         DEBUG_QQ_PRINT("DEBUG QQ: Unquote evaluated to %p\n", (void*)result);
         return result;
@@ -100,13 +100,15 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
             if (elem_head->type == SYMBOL &&
                 strcmp(utstring_body(elem_head->data.as_symbol), "unquote-splicing") == 0) {
                 // Evaluate the expression and splice it in
-                Value *spliced_expr = list_index(elem, 1);
-                if (spliced_expr == NULL || is_nil(spliced_expr)) {
-                    return NULL;
+                if (list_length(elem) != 2) {
+                    lyra_panic("unquote-splicing expects exactly 1 argument, but got %d",
+                               list_length(elem) - 1);
                 }
+                Value *spliced_expr = list_index(elem, 1);
                 Value *spliced_list = eval_s_expr(gc, closure, spliced_expr);
-                if (spliced_list == NULL) {
-                    return NULL;
+                if (spliced_list->type != CONS) {
+                    lyra_panic("unquote-splicing expects a list, but got %s",
+                               utstring_body(repr(gc, spliced_list)));
                 }
                 // Append all elements from spliced_list to result
                 for (Value *splice_curr = spliced_list; !is_nil(splice_curr); splice_curr = list_tail(splice_curr)) {
@@ -118,9 +120,6 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
 
         // Not unquote-splicing, recursively process this element
         Value *processed = eval_quasiquote(gc, closure, elem);
-        if (processed == NULL) {
-            return NULL;
-        }
         list_push(gc, processed, &result);
     }
 
@@ -142,19 +141,30 @@ static Value *apply_callable(GC *gc, Closure *closure, Value *value, Value *expr
 Value *eval_s_expr(GC *gc, Closure *closure, Value *expr) {
     switch (expr->type) {
         case CONS:
+            // () is nil, and nil evaluates to itself.
+            if (is_nil(expr)) {
+                return expr;
+            }
             Value *head = list_head(expr);
             if (head->type == SYMBOL) {
                 UT_string *symbol = expr->data.as_cons->car->data.as_symbol;
 
                 // Special form: quote
                 if (strcmp(utstring_body(symbol), "quote") == 0) {
+                    if (list_length(expr) != 2) {
+                        lyra_panic("quote expects exactly 1 argument, but got %d", list_length(expr) - 1);
+                    }
                     // Just return the first argument unevaluated
-                    return expr->data.as_cons->cdr->data.as_cons->car;
+                    return list_index(expr, 1);
                 }
 
                 // Special form: quasiquote
                 if (strcmp(utstring_body(symbol), "quasiquote") == 0) {
-                    Value *template = expr->data.as_cons->cdr->data.as_cons->car;
+                    if (list_length(expr) != 2) {
+                        lyra_panic("quasiquote expects exactly 1 argument, but got %d",
+                                   list_length(expr) - 1);
+                    }
+                    Value *template = list_index(expr, 1);
                     return eval_quasiquote(gc, closure, template);
                 }
 
