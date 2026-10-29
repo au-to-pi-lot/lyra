@@ -1207,9 +1207,9 @@ START_TEST(test_expand_macro_shows_gensym_and_is_impure)
 
     // The hygiene machinery is visible in the expansion
     ck_assert_str_eq(eval_repr(&gc, closure, "(expand-macro-1 '(safe-double 21))"),
-                     "(let ((G__0 21)) (+ G__0 G__0))");
+                     "(let ((#:G__0 21)) (+ #:G__0 #:G__0))");
     // ...and expanding really ran the body: the gensym counter moved
-    ck_assert_str_eq(eval_repr(&gc, closure, "(gensym)"), "G__1");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(gensym)"), "#:G__1");
 
     Value *pure = eval_string(&gc, closure, "(is-pure expand-macro)");
     ck_assert_ptr_nonnull(pure);
@@ -2448,6 +2448,227 @@ START_TEST(test_panic_session_survives)
 }
 END_TEST
 
+// --- Uninterned symbols: unique and gensym ---
+
+static bool eval_bool(GC *gc, Closure *closure, const char *src) {
+    Value *result = eval_string(gc, closure, src);
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, BOOLEAN);
+    return result->data.as_boolean;
+}
+
+START_TEST(test_unique_identity)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define file-not-found (unique 'file-not-found))");
+
+    // Equal to itself, and to nothing else
+    ck_assert(eval_bool(&gc, closure, "(= file-not-found file-not-found)"));
+    ck_assert(!eval_bool(&gc, closure, "(= file-not-found 'file-not-found)"));
+    ck_assert(!eval_bool(&gc, closure, "(= 'file-not-found file-not-found)"));
+    ck_assert(!eval_bool(&gc, closure, "(= (unique 'x) (unique 'x))"));
+    ck_assert(eval_bool(&gc, closure, "(is-symbol file-not-found)"));
+
+    // Still compares by identity after being stored and passed around
+    eval_string(&gc, closure, "(define same (lambda (a) a))");
+    ck_assert(eval_bool(&gc, closure, "(= (same file-not-found) file-not-found)"));
+    ck_assert(eval_bool(&gc, closure, "(= (car (cons file-not-found nil)) file-not-found)"));
+
+    // Printing marks it; converting to a string keeps only the name,
+    // and going back through `symbol` yields the interned symbol
+    ck_assert_str_eq(eval_repr(&gc, closure, "file-not-found"), "#:file-not-found");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(string file-not-found)"), "\"file-not-found\"");
+    ck_assert(!eval_bool(&gc, closure, "(= (symbol (string file-not-found)) file-not-found)"));
+    ck_assert(eval_bool(&gc, closure, "(= (symbol (string file-not-found)) 'file-not-found)"));
+    // `symbol` of a symbol is the identity, uninterned included
+    ck_assert(eval_bool(&gc, closure, "(= (symbol file-not-found) file-not-found)"));
+
+    // Interned symbols are unaffected
+    ck_assert(eval_bool(&gc, closure, "(= 'a 'a)"));
+    ck_assert(!eval_bool(&gc, closure, "(= 'a 'b)"));
+
+    // The name may be a string, or left out
+    ck_assert_str_eq(eval_repr(&gc, closure, "(unique \"file-not-found\")"), "#:file-not-found");
+    ck_assert(!eval_bool(&gc, closure, "(= (unique \"file-not-found\") file-not-found)"));
+    ck_assert_str_eq(eval_repr(&gc, closure, "(unique)"), "#:unique");
+    ck_assert(!eval_bool(&gc, closure, "(= (unique) (unique))"));
+    ck_assert(!eval_bool(&gc, closure, "(= (unique) 'unique)"));
+
+    // Anything else panics
+    ck_assert_panics(&gc, closure, "(unique 42)", "unique expects a symbol or string name, but got 42");
+    ck_assert_panics(&gc, closure, "(unique 'a 'b)", "unique expects at most 1 argument, but got 2");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_gensym_cannot_be_forged)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define g (gensym))");
+    ck_assert_str_eq(eval_repr(&gc, closure, "g"), "#:G__0");
+    ck_assert(eval_bool(&gc, closure, "(is-symbol g)"));
+    ck_assert(eval_bool(&gc, closure, "(= g g)"));
+    // Typing the printed name no longer produces an equal symbol
+    ck_assert(!eval_bool(&gc, closure, "(= g 'G__0)"));
+    ck_assert(!eval_bool(&gc, closure, "(= g (symbol \"G__0\"))"));
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_uninterned_bindings_do_not_collide)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // The user has variables whose names match what the macros will generate
+    eval_string(&gc, closure, "(define G__0 100)");
+    eval_string(&gc, closure, "(define tmp 200)");
+
+    // gensym'd binding wrapped around user code: the user's G__0 must show through
+    eval_string(&gc, closure,
+        "(define-macro with-gensym (lambda (body) "
+        "  (define t (gensym)) "
+        "  `(let ((,t 1)) ,body)))");
+    Value *result = eval_string(&gc, closure, "(with-gensym G__0)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, INT);
+    ck_assert_int_eq(result->data.as_int, 100);
+
+    // Same with a unique whose print name is the user's variable name
+    eval_string(&gc, closure,
+        "(define-macro with-unique (lambda (body) "
+        "  (define t (unique 'tmp)) "
+        "  `(let ((,t 1)) (+ ,t ,body))))");
+    result = eval_string(&gc, closure, "(with-unique tmp)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, INT);
+    ck_assert_int_eq(result->data.as_int, 201);
+
+    // Two uniques with the same print name are two distinct variables
+    eval_string(&gc, closure,
+        "(define-macro two (lambda () "
+        "  (define a (unique 'v)) "
+        "  (define b (unique 'v)) "
+        "  `((lambda (,a ,b) (cons ,a (cons ,b nil))) 1 2)))");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(two)"), "(1 2)");
+
+    // The user's variables were never touched
+    ck_assert_str_eq(eval_repr(&gc, closure, "(cons G__0 (cons tmp nil))"), "(100 200)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_match_uninterned)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define fnf (unique 'fnf))");
+
+    // A quoted-symbol pattern is the interned symbol: it does not match the unique
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match fnf ('fnf 'forged) (_ 'other))"), "other");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons fnf nil) (('fnf) 'forged) (_ 'other))"),
+                     "other");
+
+    // A pattern holding the unique itself as a quoted literal does match it
+    // (built by a macro, since the reader cannot write an uninterned symbol)
+    eval_string(&gc, closure,
+        "(define-macro is-fnf (lambda (v) "
+        "  `(match ,v ((quote ,fnf) true) (_ false))))");
+    ck_assert(eval_bool(&gc, closure, "(is-fnf fnf)"));
+    ck_assert(!eval_bool(&gc, closure, "(is-fnf 'fnf)"));
+    ck_assert(!eval_bool(&gc, closure, "(is-fnf (unique 'fnf))"));
+
+    // A gensym used as a pattern variable binds without disturbing the user's G__0
+    eval_string(&gc, closure, "(define G__0 100)");
+    eval_string(&gc, closure,
+        "(define-macro inc-match (lambda (v) "
+        "  (define g (gensym)) "
+        "  `(match ,v (,g (+ ,g G__0)))))");
+    Value *result = eval_string(&gc, closure, "(inc-match 5)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, INT);
+    ck_assert_int_eq(result->data.as_int, 105);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_match_value_patterns)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // A unique held in a variable
+    eval_string(&gc, closure, "(define fnf (unique 'file-not-found))");
+    eval_string(&gc, closure, "(define lookalike (unique 'file-not-found))");
+    ck_assert_str_eq(eval_repr(&gc, closure,
+        "(match fnf (,lookalike 'lookalike) ('file-not-found 'interned) (,fnf 'fnf) (_ 'none))"), "fnf");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match lookalike (,fnf 'fnf) (_ 'none))"), "none");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match 'file-not-found (,fnf 'fnf) (_ 'none))"), "none");
+
+    // An interned symbol held in a variable
+    eval_string(&gc, closure, "(define op 'add)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match 'add (,op 'yes) (_ 'no))"), "yes");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match 'sub (,op 'yes) (_ 'no))"), "no");
+
+    // Non-symbol values, and arbitrary expressions
+    eval_string(&gc, closure, "(define n 42)");
+    eval_string(&gc, closure, "(define s \"hi\")");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match 42 (,n 'yes) (_ 'no))"), "yes");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match 43 (,n 'yes) (,(+ n 1) 'next) (_ 'no))"), "next");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match \"hi\" (,s 'yes) (_ 'no))"), "yes");
+    // Lists compare structurally, like quoted list literals
+    eval_string(&gc, closure, "(define pair (cons 1 (cons 2 nil)))");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons 1 (cons 2 nil)) (,pair 'same) (_ 'no))"), "same");
+
+    // Nested inside a list pattern, alongside ordinary bindings
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons fnf (cons 5 nil)) ((,lookalike x) 'wrong) ((,fnf x) x) (_ 'no))"), "5");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons 1 (cons fnf nil)) ((a ,fnf) a) (_ 'no))"), "1");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons 1 (cons 2 nil)) ((a ,fnf) a) (_ 'no))"), "no");
+
+    // ,expr evaluates in the scope around match, not against bindings from the
+    // same pattern: here ,x is the outer x (1), and the pattern then binds x to 2
+    eval_string(&gc, closure, "(define x 1)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons 2 (cons 1 nil)) ((x ,x) x) (_ 'no))"), "2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "x"), "1");
+
+    // Value patterns are only evaluated when their clause is tried
+    eval_string(&gc, closure, "(match 1 (1 'one) (,(gensym) 'never))");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(gensym)"), "#:G__0");
+
+    // A macro can emit a value pattern by building the (unquote ...) form
+    eval_string(&gc, closure,
+        "(define-macro is-tag (lambda (v tag) "
+        "  `(match ,v (,(cons 'unquote (cons tag nil)) true) (_ false))))");
+    ck_assert(eval_bool(&gc, closure, "(is-tag fnf fnf)"));
+    ck_assert(!eval_bool(&gc, closure, "(is-tag lookalike fnf)"));
+
+    // ,@ has no meaning in a pattern
+    ck_assert_panics(&gc, closure, "(match pair ((1 ,@rest) 'no) (_ 'no))",
+                     "match: ,@ is not allowed in a pattern, but got (unquote-splicing rest)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 Suite *eval_suite(void)
 {
     Suite *s;
@@ -2512,6 +2733,11 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_let_macro);
     tcase_add_test(tc_core, test_gensym);
     tcase_add_test(tc_core, test_gensym_in_macro);
+    tcase_add_test(tc_core, test_unique_identity);
+    tcase_add_test(tc_core, test_gensym_cannot_be_forged);
+    tcase_add_test(tc_core, test_uninterned_bindings_do_not_collide);
+    tcase_add_test(tc_core, test_match_uninterned);
+    tcase_add_test(tc_core, test_match_value_patterns);
     tcase_add_test(tc_core, test_macroexpand_1_user_macro);
     tcase_add_test(tc_core, test_macroexpand_1_let);
     tcase_add_test(tc_core, test_macroexpand_does_not_evaluate);

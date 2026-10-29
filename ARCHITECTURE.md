@@ -82,7 +82,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
   - REPL (`repl_eval`): prints `panic: <message>` to **stderr**, returns to the prompt. The session survives; definitions completed before the panic are kept (nothing is rolled back)
   - File and `-c` mode (`run_source`): prints `panic: <message>` to stderr and exits with `panic_exit_status()`: 1 (`PANIC_DEFAULT_STATUS`) unless the panic came from `lyra_panic_with_status` / `panic-with-status`
   - `panic_report()` flushes stdout before writing to stderr so output ordering is sane
-- **What panics**: undefined variables (`undefined variable: \`x\``), non-callable call heads (`not callable: 5`), arity/type errors in intrinsics, malformed `lambda` parameter lists, `define-macro` on a non-function, `match` with no matching clause, `eval-string` parse errors, and explicit `(panic ...)`
+- **What panics**: undefined variables (`undefined variable: \`x\``), non-callable call heads (`not callable: 5`), arity/type errors in intrinsics, malformed `lambda` parameter lists, `define-macro` on a non-function, `match` with no matching clause or with `,@` in a pattern, `eval-string` parse errors, and explicit `(panic ...)`
 - **What doesn't (yet)**: I/O failures (`load-file` can't open a file, `list-directory` can't open a directory) still print and return `nil`; they're marked `// TODO: result` and will become err results. `get-var` on an unbound symbol returns `nil` by design (the module system uses it as a "defined?" check).
 - **Bad arguments** (message style `<name> expects ..., but got <repr>`): wrong arity almost everywhere (`car`, `cons`, `=`, `<`, `divmod`, `apply`, the `is-*` predicates, `if`, `define`, `quote`, ...); non-numbers to `+ - * / < <= > >=`; non-lists to `car`/`cdr`/`cons`/`apply`; non-integers to `divmod`; `division by zero` from `/` and `divmod`; calling a derived function or macro with the wrong number of arguments (`wrong number of arguments: expected 2, but got 1`, or `expected at least N` with a variadic) and destructuring a non-list
 - **Deliberately not panics**: `(car nil)`/`(cdr nil)` are `nil`; `=` across different types (including `(= 1 1.0)`) is `false`. `()` evaluates to `nil` (self-evaluating, so `(())` panics with `not callable: ()`). `<`/`<=`/`>`/`>=` panic on mixed int/float even though `+ - * /` promote
@@ -93,7 +93,14 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
 
 ## Value Types
 - Core types defined in `src/types/value.h`: CONS, INT, FLOAT, BOOLEAN, STRING, SYMBOL, FUNCTION, MACRO
-- Closures use uthash for variable storage
+- Closures use uthash for variable storage, keyed by the symbol's `as_symbol` UT_string bytes (with explicit length, so embedded NULs count)
+- **Interned vs. uninterned symbols** (`src/types/symbol.h`): both are SYMBOL (`is-symbol` is true for both).
+  - Interned symbols (from the reader and `symbol`) are equal when their names are equal.
+  - Uninterned symbols (from `unique` and `gensym`) are equal only to themselves, never to an interned symbol of the same name.
+  - Representation: `as_symbol` holds the symbol's *identity key*. An interned key is just the name; an uninterned key is `name '\0' <serial>`, the serial coming from `gc->uninterned_counter`. Interned names can't contain NUL (they're only ever built from C strings), so no interned key can equal an uninterned one, and serials never repeat within an interpreter. `utstring_body` still gives the print name.
+  - Because closures key on the full key, an uninterned symbol used as a binding name (`(lambda (,g) ...)`) is its own variable. It can't collide with a user variable of the same name or with another uninterned symbol.
+  - Use the helpers: `symbol_eq` (equality, used by `=`, `match` and the module registry), `symbol_is(v, "quote")` (recognizing special forms and keywords: interned only, so a `(unique 'quote)` is not `quote`), `symbol_is_interned`, and `symbol_key_suffix` (strips a `*` variadic prefix while keeping the hidden serial). Don't `strcmp` symbol bodies; that compares only print names.
+  - Printing: an uninterned symbol prints as `#:name`. The reader can't read that back as the same symbol. `(string s)` returns just the name (`"name"`), and `(symbol (string s))` gives back the *interned* symbol: round-tripping through text always loses identity.
 - Callables can be intrinsic (C functions) or derived (user-defined Lisp functions/macros)
 
 ## Purity Tracking
@@ -184,9 +191,15 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `is-macro` - Check if value is a macro: `(is-macro lambda)` → `true`
 
 **Macro Utilities**:
-- `gensym` - Generate unique symbol: `(gensym)` → `G__0` (increments each call)
+- `gensym` - Generate a fresh **uninterned** symbol: `(gensym)` → `#:G__0`, then `#:G__1`, ...
+  - Its identity makes it unique, not its name. Typing `'G__0` gives an interned symbol that is *not* equal to it, so macro-generated bindings can't be forged or captured
+  - The numbered print name only keeps `expand-macro` output readable
   - Use in macros to avoid variable name conflicts
   - Essential for writing hygienic macros
+- `unique` - Make a fresh uninterned symbol: `(unique 'file-not-found)` or `(unique "file-not-found")` → `#:file-not-found`; `(unique)` → `#:unique`
+  - Equal to nothing but itself: `(= (unique 'x) (unique 'x))` → `false`, and `(= (unique 'x) 'x)` → `false`
+  - The optional name may be a symbol or a string (both are intended, not an implicit conversion), and it is only for printing. Anything else, or more than one argument, panics. Meant for values like error identities that no other code can recreate
+  - Match one held in a variable with a value pattern: `(match e (,file-not-found ...) ...)`. Writing `'file-not-found` in a pattern gives the interned symbol, which won't match
 - `get-var` - Get value of variable by symbol: `(get-var 'x)` → value of x
   - Used internally by module system
 - `is-pure` - Check if function is pure: `(is-pure +)` → `true`
@@ -255,7 +268,11 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - Uses `begin`, `string`, `symbol`, `eval-string`, and `load-file`
 - `match` - Pattern matching (intrinsic special form, [src/intrinsics.c:1069](src/intrinsics.c#L1069))
   - Syntax: `(match expr ((pattern1) body1) ((pattern2) body2) ...)`
-  - Supports: literal values, quoted symbols, variable binding, list patterns, variadic patterns (`*args`)
+  - Supports: literal values, quoted symbols, variable binding, list patterns, variadic patterns (`*args`), value patterns (`,expr`)
+  - **Value patterns** `,expr` (read as `(unquote expr)`), mirroring quasiquote: `expr` is evaluated and the pattern matches a value equal to the result. Equality is the same as for literal patterns: `=` on atoms (so uninterned symbols match only themselves), structural on lists (unlike `=`, which compares conses by identity). Value patterns bind nothing and may be nested anywhere in a list pattern: `((,tag x) x)`
+    - `expr` is evaluated in the scope *around* the `match`, never seeing bindings from the pattern it sits in: in `((x ,x) ...)` the `,x` is the outer `x`. Evaluation happens while matching, so only for clauses that are actually tried, and possibly more than once if it appears in several clauses
+    - `,@expr` in a pattern panics: `match: ,@ is not allowed in a pattern, but got (unquote-splicing ...)`
+    - Inside a macro's quasiquote template, `,` is consumed by the template. To emit a value pattern, build it: `,(cons 'unquote (cons 'u nil))`, or splice the value itself as a quoted literal: `(quote ,u)`
   - Example: `(match '(lambda (x) x) (('lambda params body) params) ((x) 'no-match))`
   - See tests in `tests/test_eval.c` for full spec
 
@@ -399,7 +416,7 @@ The Lyra interpreter supports multiple modes:
 ### Macro Hygiene Patterns
 **Problem**: Macros can accidentally capture or conflict with user variable names **in the generated code**.
 
-**Solution**: Use `gensym` to generate guaranteed-unique symbols for variables that appear in the macro's template.
+**Solution**: Use `gensym` to generate guaranteed-unique symbols for variables that appear in the macro's template. Gensyms are uninterned (see "Value Types"), so their uniqueness comes from identity, not from the name: no user code can write a symbol that equals or binds the same variable as a gensym.
 
 **Important Distinction**:
 - Variables used **during macro expansion** (in macro body): Safe - they resolve in the macro's definition-site scope, never the caller's
@@ -428,15 +445,19 @@ The Lyra interpreter supports multiple modes:
 ```lisp
 (safe-double 21)  ; → 42
 
-; Even if user has 'tmp' defined, safe-double uses unique G__N
+; Even if user has 'tmp' defined, safe-double uses a fresh #:G__N
 (define tmp 100)
 (safe-double 21)  ; → 42 (not affected by tmp)
+
+; ...and even a user variable literally named G__0 is a different variable
+(define G__0 100)
 ```
 
 **Key Points**:
 - Use `gensym` for any **symbol literals** that appear in the quasiquoted template
 - Variables used only in the macro body (before the template) are safe
-- Each `gensym()` call returns a unique symbol (G__0, G__1, ...)
+- Each `gensym()` call returns a new uninterned symbol (printed `#:G__0`, `#:G__1`, ...)
+- Never build a gensym'd name as text (`string`/`symbol`/`eval-string`). That yields an interned symbol and throws away the hygiene. No prelude macro does this. `import`'s `*module-loaded-...*` markers are deliberately interned, because every `import` of a module must find the same marker
 
 ## Testing
 - **Test Coverage**: 125 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
@@ -464,7 +485,7 @@ The Lyra interpreter supports multiple modes:
 
 ## Known Issues & TODOs
 - **Macro hygiene**: ✅ **Solved!** - Use `gensym` to generate unique symbols in macros
-  - `gensym` generates symbols like `G__0`, `G__1`, etc.
+  - `gensym` generates uninterned symbols (printed `#:G__0`, `#:G__1`, ...) that can't be forged by typing their name
   - See "Macro Hygiene Patterns" section for usage examples
 - **Error handling**: Programmer errors panic (see Panics section), but there are no stack traces or source locations yet, many intrinsics still return `nil` silently on bad input, and recoverable errors have no result values yet
 - **Tail-call optimization (TCO)**: Not implemented - recursive functions will overflow stack on large inputs

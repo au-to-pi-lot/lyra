@@ -55,7 +55,8 @@ typedef struct GC {
     GCObject *head;
     size_t num_objects;
     size_t max_objects;  // trigger GC when we hit this
-    size_t gensym_counter;  // for generating unique symbols
+    size_t gensym_counter;  // numbers gensym print names (G__0, G__1, ...)
+    size_t uninterned_counter;  // serial in uninterned symbol keys (see symbol.h)
 } GC;
 
 /// @struct Cons

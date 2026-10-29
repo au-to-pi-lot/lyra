@@ -27,7 +27,7 @@
 #endif
 
 // Forward declarations for pattern matching helpers
-static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value);
+static bool pattern_matches_impl(GC *gc, Closure *closure, Value *pattern, Value *value);
 static bool values_equal(Value *a, Value *b);
 static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *value);
 
@@ -78,8 +78,7 @@ Value *process_params(GC *gc, Value *params) {
                 }
 
                 // Create variadic marker with the name (without *)
-                UT_string *rest_name = gc_alloc_string(gc);
-                utstring_printf(rest_name, "%s", name + 1);  // Skip the *
+                UT_string *rest_name = symbol_key_suffix(gc, sym, 1);  // Skip the *
                 Value *variadic_marker = make_variadic_marker(gc, rest_name);
 
                 list_push(gc, variadic_marker, &processed_params);
@@ -432,8 +431,7 @@ Value *intrinsic_eq(GC *gc, Closure *closure, Value *args) {
             return strcmp(utstring_body(first->data.as_string),
                          utstring_body(second->data.as_string)) == 0 ? TRUE : FALSE;
         case SYMBOL:
-            return strcmp(utstring_body(first->data.as_symbol),
-                         utstring_body(second->data.as_symbol)) == 0 ? TRUE : FALSE;
+            return symbol_eq(first, second) ? TRUE : FALSE;
         case CONS:
             return first->data.as_cons == second->data.as_cons ? TRUE : FALSE;
         default:
@@ -535,10 +533,31 @@ Value *intrinsic_apply(GC *gc, Closure *closure, Value *args) {
 Value *intrinsic_gensym(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     (void)args;
-    // Generate a unique symbol: G__0, G__1, G__2, etc.
-    UT_string *name = gc_alloc_string(gc);
-    utstring_printf(name, "G__%zu", gc->gensym_counter++);
-    return make_symbol(gc, name);
+    // Fresh uninterned symbol. Its identity, not its name, makes it unique;
+    // the numbered print name (G__0, G__1, ...) only keeps expansions readable.
+    char name[32];
+    snprintf(name, sizeof name, "G__%zu", gc->gensym_counter++);
+    return make_uninterned_symbol(gc, name);
+}
+
+// (unique), (unique 'name) or (unique "name"): a fresh uninterned symbol,
+// equal only to itself. The optional name is only for printing; without one
+// the print name is "unique". Impure: each call yields a new identity.
+Value *intrinsic_unique(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    int argc = list_length(args);
+    if (argc > 1) {
+        lyra_panic("unique expects at most 1 argument, but got %d", argc);
+    }
+    if (argc == 0) {
+        return make_uninterned_symbol(gc, "unique");
+    }
+    Value *name = list_head(args);
+    if (name->type != SYMBOL && name->type != STRING) {
+        lyra_panic("unique expects a symbol or string name, but got %s", utstring_body(repr(gc, name)));
+    }
+    // Same field either way; utstring_body stops at an uninterned key's NUL
+    return make_uninterned_symbol(gc, utstring_body(name->data.as_string));
 }
 
 // (expand-macro-1 form) / (expand-macro form): expand without evaluating.
@@ -952,8 +971,7 @@ Value *intrinsic_module(GC *gc, Closure *closure, Value *args) {
     }
 
     Value *export_keyword = list_head(export_form);
-    if (export_keyword->type != SYMBOL ||
-        strcmp(utstring_body(export_keyword->data.as_symbol), "export") != 0) {
+    if (!symbol_is(export_keyword, "export")) {
         lyra_panic("module: expected (export ...) form");
     }
 
@@ -1018,9 +1036,7 @@ Value *intrinsic_module(GC *gc, Closure *closure, Value *args) {
     for (Value *entries = registry; !is_nil(entries); entries = list_tail(entries)) {
         Value *entry = list_head(entries);
         Value *entry_name = list_head(entry);
-        if (entry_name->type == SYMBOL &&
-            strcmp(utstring_body(entry_name->data.as_symbol),
-                   utstring_body(name_val->data.as_symbol)) == 0) {
+        if (entry_name->type == SYMBOL && symbol_eq(entry_name, name_val)) {
             // Found existing module entry - save its exports for merging
             // Entry format is (name . exports), so tail gives (exports), we need car of that
             Value *exports_cell = list_tail(entry);
@@ -1047,8 +1063,7 @@ Value *intrinsic_module(GC *gc, Closure *closure, Value *args) {
             Value *new_pair = list_head(new_exp);
             Value *new_sym = list_head(new_pair);
             if (new_sym->type == SYMBOL && existing_sym->type == SYMBOL &&
-                strcmp(utstring_body(new_sym->data.as_symbol),
-                       utstring_body(existing_sym->data.as_symbol)) == 0) {
+                symbol_eq(new_sym, existing_sym)) {
                 found = 1;
                 break;
             }
@@ -1112,6 +1127,8 @@ Value *intrinsic_list_directory(GC *gc, Closure *closure, Value *args) {
 // Returns the body of the first matching pattern with variables bound
 // Pattern matching rules:
 // - Literal quoted values ('foo, 42, etc.) match equal values
+// - Value patterns ,expr evaluate expr in match's enclosing scope and match
+//   values equal to the result (same equality as literals); they bind nothing
 // - Symbol '_' matches anything (wildcard, not bound)
 // - Symbol starting with '*' matches remaining list elements (variadic)
 // - Other symbols match anything (variable binding)
@@ -1146,7 +1163,7 @@ Value *intrinsic_match(GC *gc, Closure *closure, Value *args) {
         Value *pattern = list_head(clause);
 
         // Check if pattern matches
-        if (pattern_matches_impl(gc, pattern, value)) {
+        if (pattern_matches_impl(gc, closure, pattern, value)) {
             // Pattern matches! Bind variables and evaluate body
             // Create a new closure for the bindings
             Closure *match_closure = make_closure(gc, closure);
@@ -1170,14 +1187,38 @@ Value *intrinsic_match(GC *gc, Closure *closure, Value *args) {
     lyra_panic("match: no pattern matched %s", utstring_body(repr(gc, value)));
 }
 
-// Helper function to recursively check pattern matching
-static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value) {
+// If `pattern` is a (unquote expr) or (unquote-splicing expr) form, returns
+// the form's head symbol name; otherwise NULL.
+static const char *pattern_unquote_kind(Value *pattern) {
+    if (pattern->type != CONS || is_nil(pattern)) return NULL;
+    Value *head = list_head(pattern);
+    if (symbol_is(head, "unquote")) return "unquote";
+    if (symbol_is(head, "unquote-splicing")) return "unquote-splicing";
+    return NULL;
+}
+
+// Helper function to recursively check pattern matching.
+// `closure` is match's enclosing scope, where ,expr value patterns evaluate.
+static bool pattern_matches_impl(GC *gc, Closure *closure, Value *pattern, Value *value) {
+    // Value pattern: ,expr matches anything equal to expr's value
+    const char *unquote_kind = pattern_unquote_kind(pattern);
+    if (unquote_kind != NULL) {
+        if (strcmp(unquote_kind, "unquote-splicing") == 0) {
+            lyra_panic("match: ,@ is not allowed in a pattern, but got %s",
+                       utstring_body(repr(gc, pattern)));
+        }
+        if (list_length(pattern) != 2) {
+            lyra_panic("unquote expects exactly 1 argument, but got %d", list_length(pattern) - 1);
+        }
+        Value *expected = eval_s_expr(gc, closure, list_index(pattern, 1));
+        return values_equal(expected, value);
+    }
+
     // Check if entire pattern is a STANDALONE quoted literal: (quote value)
     // This is different from a list pattern like ((quote foo) bar baz)
     if (pattern->type == CONS && !is_nil(pattern) && list_length(pattern) == 2) {
         Value *pattern_head = list_head(pattern);
-        if (pattern_head->type == SYMBOL &&
-            strcmp(utstring_body(pattern_head->data.as_symbol), "quote") == 0) {
+        if (symbol_is(pattern_head, "quote")) {
             // This is a standalone (quote something) - match the literal value
             Value *literal = list_index(pattern, 1);
             return values_equal(literal, value);
@@ -1187,7 +1228,7 @@ static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value) {
     // Wildcard matches anything
     if (pattern->type == SYMBOL) {
         const char *sym = utstring_body(pattern->data.as_symbol);
-        if (strcmp(sym, "_") == 0) {
+        if (symbol_is(pattern, "_")) {
             return true;  // Wildcard
         }
         if (sym[0] == '*') {
@@ -1214,8 +1255,7 @@ static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value) {
         Value *pattern_head = list_head(pattern);
         if (pattern_head->type == CONS && !is_nil(pattern_head)) {
             Value *pattern_head_first = list_head(pattern_head);
-            if (pattern_head_first->type == SYMBOL &&
-                strcmp(utstring_body(pattern_head_first->data.as_symbol), "quote") == 0) {
+            if (symbol_is(pattern_head_first, "quote")) {
                 // This is a quoted value - must match exactly
                 Value *pattern_quoted = list_index(pattern_head, 1);
                 Value *value_head = is_nil(value) ? NIL : list_head(value);
@@ -1227,7 +1267,7 @@ static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value) {
                 // Continue matching the rest
                 Value *pattern_tail = list_tail(pattern);
                 Value *value_tail = is_nil(value) ? NIL : list_tail(value);
-                return pattern_matches_impl(gc, pattern_tail, value_tail);
+                return pattern_matches_impl(gc, closure, pattern_tail, value_tail);
             }
         }
 
@@ -1251,11 +1291,11 @@ static bool pattern_matches_impl(GC *gc, Value *pattern, Value *value) {
         }
 
         // Recursively match head and tail
-        if (!pattern_matches_impl(gc, pattern_head, list_head(value))) {
+        if (!pattern_matches_impl(gc, closure, pattern_head, list_head(value))) {
             return false;
         }
 
-        return pattern_matches_impl(gc, list_tail(pattern), list_tail(value));
+        return pattern_matches_impl(gc, closure, list_tail(pattern), list_tail(value));
     }
 
     // Literal values (int, float, string, boolean) must match exactly
@@ -1278,7 +1318,7 @@ static bool values_equal(Value *a, Value *b) {
         case STRING:
             return strcmp(utstring_body(a->data.as_string), utstring_body(b->data.as_string)) == 0;
         case SYMBOL:
-            return strcmp(utstring_body(a->data.as_symbol), utstring_body(b->data.as_symbol)) == 0;
+            return symbol_eq(a, b);
         case CONS:
             if (is_nil(a) && is_nil(b)) {
                 return true;
@@ -1297,11 +1337,15 @@ static bool values_equal(Value *a, Value *b) {
 // Helper to bind variables from pattern to values
 // This is called after pattern_matches_impl returns true
 static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *value) {
+    // Value patterns (,expr) don't bind
+    if (pattern_unquote_kind(pattern) != NULL) {
+        return;
+    }
+
     // Check if entire pattern is a STANDALONE quoted literal - don't bind anything
     if (pattern->type == CONS && !is_nil(pattern) && list_length(pattern) == 2) {
         Value *pattern_head = list_head(pattern);
-        if (pattern_head->type == SYMBOL &&
-            strcmp(utstring_body(pattern_head->data.as_symbol), "quote") == 0) {
+        if (symbol_is(pattern_head, "quote")) {
             // Standalone quoted literal - no binding
             return;
         }
@@ -1310,17 +1354,14 @@ static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *v
     // Wildcard and literal patterns don't bind
     if (pattern->type == SYMBOL) {
         const char *sym = utstring_body(pattern->data.as_symbol);
-        if (strcmp(sym, "_") == 0) {
+        if (symbol_is(pattern, "_")) {
             return;  // Wildcard - don't bind
         }
         if (sym[0] == '*') {
             // Variadic pattern - bind to remaining list
-            if (strcmp(sym, "*_") != 0) {
-                // Create a new symbol without the *
-                UT_string *var_name = gc_alloc_string(gc);
-                utstring_printf(var_name, "%s", sym + 1);
-                Value *var_symbol = make_symbol(gc, var_name);
-                set_var(gc, closure, var_symbol->data.as_symbol, value);
+            if (!symbol_is(pattern, "*_")) {
+                // Bind under the name without the *
+                set_var(gc, closure, symbol_key_suffix(gc, pattern->data.as_symbol, 1), value);
             }
             // else *_ is a wildcard variadic - don't bind
             return;
@@ -1343,8 +1384,7 @@ static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *v
         // Handle quoted literals - don't bind
         if (pattern_head->type == CONS && !is_nil(pattern_head)) {
             Value *pattern_head_first = list_head(pattern_head);
-            if (pattern_head_first->type == SYMBOL &&
-                strcmp(utstring_body(pattern_head_first->data.as_symbol), "quote") == 0) {
+            if (symbol_is(pattern_head_first, "quote")) {
                 // Skip the literal, continue with rest
                 pattern_bind_vars(gc, closure, list_tail(pattern), list_tail(value));
                 return;
@@ -1356,11 +1396,8 @@ static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *v
             const char *sym = utstring_body(pattern_head->data.as_symbol);
             if (sym[0] == '*') {
                 // Bind variadic to rest of list
-                if (strcmp(sym, "*_") != 0) {
-                    UT_string *var_name = gc_alloc_string(gc);
-                    utstring_printf(var_name, "%s", sym + 1);
-                    Value *var_symbol = make_symbol(gc, var_name);
-                    set_var(gc, closure, var_symbol->data.as_symbol, value);
+                if (!symbol_is(pattern_head, "*_")) {
+                    set_var(gc, closure, symbol_key_suffix(gc, pattern_head->data.as_symbol, 1), value);
                 }
                 return;  // Variadic is last, no more to bind
             }

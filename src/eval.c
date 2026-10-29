@@ -1,6 +1,7 @@
 #include "eval.h"
 #include "call.h"
 #include "types/list.h"
+#include "types/symbol.h"
 #include <stdio.h>
 #include "parser.h"
 #include "panic.h"
@@ -67,7 +68,7 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
     Value *head = list_head(expr);
 
     // Check if this is an unquote form: (unquote x)
-    if (head->type == SYMBOL && strcmp(utstring_body(head->data.as_symbol), "unquote") == 0) {
+    if (symbol_is(head, "unquote")) {
         DEBUG_QQ_PRINT("DEBUG QQ: Found unquote\n");
         // Evaluate the unquoted expression
         if (list_length(expr) != 2) {
@@ -81,7 +82,7 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
 
     // Check if this is an unquote-splicing form: (unquote-splicing xs)
     // This is handled by the parent, so we shouldn't see it here at the top level
-    if (head->type == SYMBOL && strcmp(utstring_body(head->data.as_symbol), "unquote-splicing") == 0) {
+    if (symbol_is(head, "unquote-splicing")) {
         lyra_panic("unquote-splicing used outside a list");
     }
 
@@ -97,8 +98,7 @@ Value *eval_quasiquote(GC *gc, Closure *closure, Value *expr) {
         // Check if this element is (unquote-splicing xs)
         if (elem->type == CONS && !is_nil(elem)) {
             Value *elem_head = list_head(elem);
-            if (elem_head->type == SYMBOL &&
-                strcmp(utstring_body(elem_head->data.as_symbol), "unquote-splicing") == 0) {
+            if (symbol_is(elem_head, "unquote-splicing")) {
                 // Evaluate the expression and splice it in
                 if (list_length(elem) != 2) {
                     lyra_panic("unquote-splicing expects exactly 1 argument, but got %d",
@@ -147,10 +147,8 @@ Value *eval_s_expr(GC *gc, Closure *closure, Value *expr) {
             }
             Value *head = list_head(expr);
             if (head->type == SYMBOL) {
-                UT_string *symbol = expr->data.as_cons->car->data.as_symbol;
-
                 // Special form: quote
-                if (strcmp(utstring_body(symbol), "quote") == 0) {
+                if (symbol_is(head, "quote")) {
                     if (list_length(expr) != 2) {
                         lyra_panic("quote expects exactly 1 argument, but got %d", list_length(expr) - 1);
                     }
@@ -159,7 +157,7 @@ Value *eval_s_expr(GC *gc, Closure *closure, Value *expr) {
                 }
 
                 // Special form: quasiquote
-                if (strcmp(utstring_body(symbol), "quasiquote") == 0) {
+                if (symbol_is(head, "quasiquote")) {
                     if (list_length(expr) != 2) {
                         lyra_panic("quasiquote expects exactly 1 argument, but got %d",
                                    list_length(expr) - 1);

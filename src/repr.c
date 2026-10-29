@@ -1,6 +1,7 @@
 #include "repr.h"
 #include "types/value.h"
 #include "types/list.h"
+#include "types/symbol.h"
 
 
 static UT_string *repr_internal(Value *val, UT_string *out);
@@ -72,7 +73,9 @@ static UT_string *repr_internal(Value *val, UT_string *out) {
             repr_string(val->data.as_string, out);
             break;
         case SYMBOL:
-            utstring_concat(out, val->data.as_symbol);
+            // Print name only; uninterned symbols get a `#:` marker (see symbol.h)
+            utstring_printf(out, "%s%s", symbol_is_interned(val) ? "" : "#:",
+                            utstring_body(val->data.as_symbol));
             break;
         case BOOLEAN:
             utstring_printf(out, "%s", val->data.as_boolean ? "true" : "false");
