@@ -732,6 +732,46 @@ Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args) {
     return result;
 }
 
+static FILE *print_stream = NULL;
+
+void intrinsic_set_print_stream(FILE *stream) {
+    print_stream = stream;
+}
+
+// Shared by print/write: concatenates string args (no separator) to the output stream,
+// optionally followed by a newline. All args are validated before anything is written.
+// A future file-handle variant of write can peel a handle off the front of args here.
+static Value *write_strings(Value *args, const char *name, bool newline) {
+    for (Value *p = args; !is_nil(p); p = list_tail(p)) {
+        if (list_head(p)->type != STRING) {
+            printf("%s requires string arguments\n", name);
+            return NIL;
+        }
+    }
+
+    FILE *out = print_stream ? print_stream : stdout;
+    for (Value *p = args; !is_nil(p); p = list_tail(p)) {
+        fputs(utstring_body(list_head(p)->data.as_string), out);
+    }
+    if (newline) fputc('\n', out);
+    fflush(out);
+    return NIL;
+}
+
+// (print "a" "b" ...) - like write, plus a trailing newline
+Value *intrinsic_print(GC *gc, Closure *closure, Value *args) {
+    (void)gc;
+    (void)closure;
+    return write_strings(args, "print", true);
+}
+
+// (write "a" "b" ...) - no trailing newline
+Value *intrinsic_write(GC *gc, Closure *closure, Value *args) {
+    (void)gc;
+    (void)closure;
+    return write_strings(args, "write", false);
+}
+
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     // (get-var 'symbol)
