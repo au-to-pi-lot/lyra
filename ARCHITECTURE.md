@@ -346,7 +346,9 @@ The Lyra interpreter supports multiple modes:
 - **Macro argument binding bug** ([src/call.c:87](src/call.c#L87)): Was using `list_head(args)` instead of `list_head(args_iter)` when binding macro parameters, causing incorrect argument binding when iterating through parameter list. This caused the `fn` macro to fail because parameters were bound to wrong values.
 
 ### Code Patterns
-- **Macro expansion**: Macros receive unevaluated arguments, expand them in macro's closure, then evaluate the expansion in the caller's closure ([src/call.c:133-134](src/call.c#L133-L134))
+- **Macro expansion**: Macros receive unevaluated arguments, expand them in a fresh child of the **caller's** closure (expansion-time `define`s stay there and don't leak), then evaluate the expansion in the caller's closure ([src/call.c](src/call.c), `call_derived_macro`)
+  - Expansion and evaluation are separate steps: `expand_derived_macro` produces the expansion only, and `call_derived_macro` = expand + `eval_s_expr`
+  - `macroexpand_1` / `macroexpand` ([src/call.h](src/call.h)) are the C-level "expand without evaluating" helpers: they resolve the head symbol in the given closure like `eval_s_expr` does, expand only **derived** macros (special forms / intrinsic macros, functions, unbound or non-symbol heads, and atoms come back unchanged, by pointer), and never descend into subforms. `macroexpand` repeats at the head until the form stops being a derived-macro call
 - **Function application**: Functions receive evaluated arguments and execute in a new closure derived from their definition environment
 - **`begin` special form**: Critical for macros - evaluates expressions sequentially in the **current** closure without creating a new scope
   - This allows `define` in macro expansions to affect the caller's scope

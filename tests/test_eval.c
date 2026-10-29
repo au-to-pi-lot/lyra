@@ -9,6 +9,8 @@
 #include "../src/gc.h"
 #include "../src/intrinsics.h"
 #include <stdio.h>
+#include "../src/call.h"
+#include "../src/repr.h"
 
 // Helper to parse and evaluate
 static Value* eval_string(GC *gc, Closure *closure, const char *input) {
@@ -875,6 +877,153 @@ START_TEST(test_gensym_in_macro)
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, INT);
     ck_assert_int_eq(result->data.as_int, 42);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+// --- Macro expansion (internal helpers in src/call.c) ---
+
+static const char *expand_repr(GC *gc, Closure *closure, const char *src, bool all_steps, bool *expanded) {
+    Value *form = parse(gc, src);
+    Value *out = all_steps ? macroexpand(gc, closure, form, expanded)
+                           : macroexpand_1(gc, closure, form, expanded);
+    ck_assert_ptr_nonnull(out);
+    return utstring_body(repr(gc, out));
+}
+
+START_TEST(test_macroexpand_1_user_macro)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define-macro twice (lambda (x) `(+ ,x ,x)))");
+
+    bool expanded = false;
+    ck_assert_str_eq(expand_repr(&gc, closure, "(twice 5)", false, &expanded), "(+ 5 5)");
+    ck_assert(expanded);
+
+    // Arguments are passed unevaluated, exactly as at a real call site
+    ck_assert_str_eq(expand_repr(&gc, closure, "(twice (* 2 3))", false, &expanded), "(+ (* 2 3) (* 2 3))");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_macroexpand_1_let)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    bool expanded = false;
+    ck_assert_str_eq(expand_repr(&gc, closure, "(let ((x 1) (y 2)) (+ x y))", false, &expanded),
+                     "((lambda (x y) (+ x y)) 1 2)");
+    ck_assert(expanded);
+
+    // Expansion-time defines in let's body (vars, vals) must not leak into the caller
+    ck_assert_ptr_null(eval_string(&gc, closure, "vars"));
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_macroexpand_does_not_evaluate)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    bool expanded = false;
+    ck_assert_str_eq(expand_repr(&gc, closure, "(fn sq (n) (* n n))", false, &expanded),
+                     "(define sq (Z (lambda (sq) (lambda (n) (* n n)))))");
+    ck_assert(expanded);
+
+    // The expansion is a `define`, but it was never evaluated
+    ck_assert_ptr_null(eval_string(&gc, closure, "sq"));
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_macroexpand_1_leaves_non_macro_forms)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+    eval_string(&gc, closure, "(define-macro twice (lambda (x) `(+ ,x ,x)))");
+
+    const char *unchanged[] = {
+        "(if true 1 2)",          // special form (intrinsic macro)
+        "(lambda (x) x)",         // special form
+        "(+ 1 2)",                // function call
+        "(undefined-thing 1)",    // unbound head
+        "((lambda (x) x) 1)",     // non-symbol head
+        "(+ (twice 1) 2)",        // macro only in a subform: not expanded
+        "42",
+        "foo",
+        "()",
+    };
+    for (size_t i = 0; i < sizeof(unchanged) / sizeof(unchanged[0]); i++) {
+        Value *form = parse(&gc, unchanged[i]);
+        bool expanded = true;
+        Value *out = macroexpand_1(&gc, closure, form, &expanded);
+        ck_assert_ptr_eq(out, form);
+        ck_assert(!expanded);
+        expanded = true;
+        out = macroexpand(&gc, closure, form, &expanded);
+        ck_assert_ptr_eq(out, form);
+        ck_assert(!expanded);
+    }
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_macroexpand_repeats_at_head)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define-macro inc (lambda (x) `(+ ,x 1)))");
+    eval_string(&gc, closure, "(define-macro inc-via (lambda (x) `(inc ,x)))");
+
+    bool expanded = false;
+    ck_assert_str_eq(expand_repr(&gc, closure, "(inc-via 5)", false, &expanded), "(inc 5)");
+    ck_assert(expanded);
+    ck_assert_str_eq(expand_repr(&gc, closure, "(inc-via 5)", true, &expanded), "(+ 5 1)");
+    ck_assert(expanded);
+
+    // Stops at a special form: fn -> (define ...)
+    ck_assert_str_eq(expand_repr(&gc, closure, "(fn id (x) x)", true, &expanded),
+                     "(define id (Z (lambda (id) (lambda (x) x))))");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_macroexpand_resolves_in_caller_closure)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *global = make_closure(&gc, NULL);
+    prelude(&gc, global);
+    eval_string(&gc, global, "(define-macro m (lambda (x) `(outer ,x)))");
+
+    // A child scope that shadows `m` with a different macro
+    Closure *inner = make_closure(&gc, global);
+    eval_string(&gc, inner, "(define-macro m (lambda (x) `(inner ,x)))");
+
+    bool expanded = false;
+    ck_assert_str_eq(expand_repr(&gc, global, "(m 1)", false, &expanded), "(outer 1)");
+    ck_assert_str_eq(expand_repr(&gc, inner, "(m 1)", false, &expanded), "(inner 1)");
 
     gc_free_all(&gc);
 }
@@ -1789,6 +1938,12 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_let_macro);
     tcase_add_test(tc_core, test_gensym);
     tcase_add_test(tc_core, test_gensym_in_macro);
+    tcase_add_test(tc_core, test_macroexpand_1_user_macro);
+    tcase_add_test(tc_core, test_macroexpand_1_let);
+    tcase_add_test(tc_core, test_macroexpand_does_not_evaluate);
+    tcase_add_test(tc_core, test_macroexpand_1_leaves_non_macro_forms);
+    tcase_add_test(tc_core, test_macroexpand_repeats_at_head);
+    tcase_add_test(tc_core, test_macroexpand_resolves_in_caller_closure);
     tcase_add_test(tc_core, test_not);
     tcase_add_test(tc_core, test_and_short_circuit);
     tcase_add_test(tc_core, test_or_short_circuit);

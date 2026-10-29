@@ -68,8 +68,8 @@ void assign_args(GC *gc, Closure *closure, Value *params, Value *args) {
     }
 }
 
-Value *call_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args) {
-    // Create new closure from macro's captured environment
+Value *expand_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args) {
+    // Expansion-time bindings live in a fresh child of the caller's closure
     Closure *new_closure = make_closure(gc, closure);
     assign_args(gc, new_closure, callable.params, args);
 
@@ -101,8 +101,64 @@ Value *call_derived_macro(GC *gc, Closure *closure, Derived callable, Value *arg
     }
 #endif
 
+    return expansion;
+}
+
+Value *call_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args) {
+    Value *expansion = expand_derived_macro(gc, closure, callable, args);
+    if (expansion == NULL) {
+        return NULL;
+    }
     // Evaluate expansion in CALLER'S closure
     return eval_s_expr(gc, closure, expansion);
+}
+
+Value *macroexpand_1(GC *gc, Closure *closure, Value *form, bool *expanded) {
+    if (expanded != NULL) {
+        *expanded = false;
+    }
+
+    // Only a non-empty list headed by a symbol can be a macro call.
+    // (Head expressions that are themselves lists would have to be
+    // evaluated to find out, which expansion must not do.)
+    if (form == NULL || form->type != CONS || is_nil(form)) {
+        return form;
+    }
+    Value *head = list_head(form);
+    if (head->type != SYMBOL) {
+        return form;
+    }
+
+    // Resolve the head the same way eval_s_expr does: in the caller's closure.
+    Value *value = get_var(closure, head->data.as_symbol);
+    if (value == NULL || value->type != MACRO) {
+        return form;
+    }
+
+    // Intrinsic macros (special forms) have no expansion; leave them alone.
+    Callable *macro = value->data.as_macro;
+    if (macro->type != DERIVED_MACRO) {
+        return form;
+    }
+
+    Value *expansion = expand_derived_macro(gc, closure, macro->data.as_derived, list_tail(form));
+    if (expansion != NULL && expanded != NULL) {
+        *expanded = true;
+    }
+    return expansion;
+}
+
+Value *macroexpand(GC *gc, Closure *closure, Value *form, bool *expanded) {
+    bool any = false;
+    bool step = true;
+    while (step && form != NULL) {
+        form = macroexpand_1(gc, closure, form, &step);
+        any = any || step;
+    }
+    if (expanded != NULL) {
+        *expanded = any;
+    }
+    return form;
 }
 
 Value *call_intrinsic(GC *gc, Closure *closure, Intrinsic callable, Value *args) {
