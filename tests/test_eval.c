@@ -7,6 +7,8 @@
 #include "../src/types/value.h"
 #include "../src/types/list.h"
 #include "../src/gc.h"
+#include "../src/intrinsics.h"
+#include <stdio.h>
 
 // Helper to parse and evaluate
 static Value* eval_string(GC *gc, Closure *closure, const char *input) {
@@ -1690,6 +1692,50 @@ START_TEST(test_match_no_side_effects_in_unmatched)
 }
 END_TEST
 
+START_TEST(test_print)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    FILE *tmp = tmpfile();
+    ck_assert_ptr_nonnull(tmp);
+    intrinsic_set_print_stream(tmp);
+
+    Value *result = eval_string(&gc, closure, "(write \"hello\")");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(is_nil(result));
+    eval_string(&gc, closure, "(write \" world\")");
+    eval_string(&gc, closure, "(write \"a\" \"b\" \"c\")");
+    eval_string(&gc, closure, "(write)");
+    eval_string(&gc, closure, "(write \"x\" 42)");  // all-or-nothing: writes nothing
+    eval_string(&gc, closure, "(write 42)");  // error path writes nothing to the stream
+
+    // print adds a newline; (print) is just a newline; errors write nothing
+    eval_string(&gc, closure, "(print \"p\" \"q\")");
+    eval_string(&gc, closure, "(print)");
+    eval_string(&gc, closure, "(print 1)");
+
+    intrinsic_set_print_stream(NULL);
+    rewind(tmp);
+    char buf[64] = {0};
+    size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
+    buf[n] = '\0';
+    fclose(tmp);
+    ck_assert_str_eq(buf, "hello worldabcpq\n\n");
+
+    result = eval_string(&gc, closure, "(is-pure print)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(result->data.as_boolean == false);
+    result = eval_string(&gc, closure, "(is-pure write)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(result->data.as_boolean == false);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 Suite *eval_suite(void)
 {
     Suite *s;
@@ -1700,6 +1746,7 @@ Suite *eval_suite(void)
 
     tcase_add_test(tc_core, test_prelude);
     tcase_add_test(tc_core, test_eval_integer);
+    tcase_add_test(tc_core, test_print);
     tcase_add_test(tc_core, test_eval_float);
     tcase_add_test(tc_core, test_eval_string);
     tcase_add_test(tc_core, test_eval_add);
