@@ -163,7 +163,11 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 **Arithmetic**:
 - `+`, `-`, `*`, `/` - Basic arithmetic (variadic, auto-promote int→float)
 - `divmod` - Integer division with remainder: `(divmod 17 5)` → `(3 2)`
-- `=` - Equality test
+- `=` - Equality test: `(= a b)`. Values of different types are never equal (`(= 1 1.0)` → `false`)
+  - Atoms: numbers by value, strings by contents, booleans by value, interned symbols by name, uninterned symbols (`unique`/`gensym`) by identity
+  - Lists are compared **structurally**, recursively, applying the atom rules at every level: `(= '(1 (2 "x")) '(1 (2 "x")))` → `true`. A list of uniques equals another only if it holds the same uniques
+  - Functions and macros are equal only to themselves: `(= car car)` → `true`, but two separately written `(lambda (x) x)` are not equal
+  - Implemented by `values_equal` in `src/intrinsics.c`. `match` uses the same function for literal and `,expr` patterns, so the three can't drift apart
 
 **List Operations**:
 - `car` - Get first element: `(car '(1 2 3))` → `1`
@@ -269,7 +273,7 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `match` - Pattern matching (intrinsic special form, [src/intrinsics.c:1069](src/intrinsics.c#L1069))
   - Syntax: `(match expr ((pattern1) body1) ((pattern2) body2) ...)`
   - Supports: literal values, quoted symbols, variable binding, list patterns, variadic patterns (`*args`), value patterns (`,expr`)
-  - **Value patterns** `,expr` (read as `(unquote expr)`), mirroring quasiquote: `expr` is evaluated and the pattern matches a value equal to the result. Equality is the same as for literal patterns: `=` on atoms (so uninterned symbols match only themselves), structural on lists (unlike `=`, which compares conses by identity). Value patterns bind nothing and may be nested anywhere in a list pattern: `((,tag x) x)`
+  - **Value patterns** `,expr` (read as `(unquote expr)`), mirroring quasiquote: `expr` is evaluated and the pattern matches a value equal to the result. Equality is exactly `=` (shared with literal patterns), so uninterned symbols match only themselves and lists match structurally. Value patterns bind nothing and may be nested anywhere in a list pattern: `((,tag x) x)`
     - `expr` is evaluated in the scope *around* the `match`, never seeing bindings from the pattern it sits in: in `((x ,x) ...)` the `,x` is the outer `x`. Evaluation happens while matching, so only for clauses that are actually tried, and possibly more than once if it appears in several clauses
     - `,@expr` in a pattern panics: `match: ,@ is not allowed in a pattern, but got (unquote-splicing ...)`
     - Inside a macro's quasiquote template, `,` is consumed by the template. To emit a value pattern, build it: `,(cons 'unquote (cons 'u nil))`, or splice the value itself as a quoted literal: `(quote ,u)`

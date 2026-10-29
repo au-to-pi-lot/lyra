@@ -416,27 +416,7 @@ Value *intrinsic_eq(GC *gc, Closure *closure, Value *args) {
     Value *first = list_index(args, 0);
     Value *second = list_index(args, 1);
 
-    // Type must match
-    if (first->type != second->type) return FALSE;
-
-    // Compare based on type
-    switch (first->type) {
-        case INT:
-            return first->data.as_int == second->data.as_int ? TRUE : FALSE;
-        case FLOAT:
-            return first->data.as_float == second->data.as_float ? TRUE : FALSE;
-        case BOOLEAN:
-            return first->data.as_boolean == second->data.as_boolean ? TRUE : FALSE;
-        case STRING:
-            return strcmp(utstring_body(first->data.as_string),
-                         utstring_body(second->data.as_string)) == 0 ? TRUE : FALSE;
-        case SYMBOL:
-            return symbol_eq(first, second) ? TRUE : FALSE;
-        case CONS:
-            return first->data.as_cons == second->data.as_cons ? TRUE : FALSE;
-        default:
-            return FALSE;
-    }
+    return values_equal(first, second) ? TRUE : FALSE;
 }
 
 typedef enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE } CmpOp;
@@ -1302,8 +1282,24 @@ static bool pattern_matches_impl(GC *gc, Closure *closure, Value *pattern, Value
     return values_equal(pattern, value);
 }
 
-// Helper to check if two values are equal
+// The one equality: used by `=`, literal patterns and ,expr value patterns
+// in `match`, so they can't drift apart. Different types are never equal.
+// Atoms: numbers by value, strings by contents, interned symbols by name,
+// uninterned symbols by identity (symbol_eq). Lists compare element by
+// element, recursively. Functions and macros are equal only to themselves.
 static bool values_equal(Value *a, Value *b) {
+    // Walk list spines iteratively so long lists don't grow the C stack
+    while (a->type == CONS && b->type == CONS) {
+        if (is_nil(a) || is_nil(b)) {
+            return is_nil(a) && is_nil(b);
+        }
+        if (!values_equal(list_head(a), list_head(b))) {
+            return false;
+        }
+        a = list_tail(a);
+        b = list_tail(b);
+    }
+
     if (a->type != b->type) {
         return false;
     }
@@ -1319,17 +1315,8 @@ static bool values_equal(Value *a, Value *b) {
             return strcmp(utstring_body(a->data.as_string), utstring_body(b->data.as_string)) == 0;
         case SYMBOL:
             return symbol_eq(a, b);
-        case CONS:
-            if (is_nil(a) && is_nil(b)) {
-                return true;
-            }
-            if (is_nil(a) || is_nil(b)) {
-                return false;
-            }
-            return values_equal(list_head(a), list_head(b)) &&
-                   values_equal(list_tail(a), list_tail(b));
         default:
-            // For functions, macros, etc., use pointer equality
+            // Functions, macros: identity
             return a == b;
     }
 }

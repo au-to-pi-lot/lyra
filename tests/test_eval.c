@@ -2669,6 +2669,48 @@ START_TEST(test_match_value_patterns)
 }
 END_TEST
 
+START_TEST(test_eq_structural_lists)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // Lists compare by contents, not by cons-cell identity
+    ck_assert(eval_bool(&gc, closure, "(= '(1 2) '(1 2))"));
+    ck_assert(eval_bool(&gc, closure, "(= (cons 1 (cons 2 nil)) '(1 2))"));
+    ck_assert(!eval_bool(&gc, closure, "(= '(1 2) '(1 3))"));
+    ck_assert(!eval_bool(&gc, closure, "(= '(1 2) '(1 2 3))"));
+    ck_assert(!eval_bool(&gc, closure, "(= '(1 2 3) '(1 2))"));
+    ck_assert(!eval_bool(&gc, closure, "(= '(1) 1)"));
+    ck_assert(eval_bool(&gc, closure, "(= nil '())"));
+    ck_assert(!eval_bool(&gc, closure, "(= nil '(1))"));
+
+    // Nested lists, with the per-atom rules applied at every level
+    ck_assert(eval_bool(&gc, closure, "(= '(a (b \"c\" (1 2.5)) ()) '(a (b \"c\" (1 2.5)) ()))"));
+    ck_assert(!eval_bool(&gc, closure, "(= '(a (b c)) '(a (b d)))"));
+    ck_assert(!eval_bool(&gc, closure, "(= '((1)) '((1.0)))"));
+
+    // Lists containing uniques: identity inside, names don't count
+    eval_string(&gc, closure, "(define u (unique 'tag))");
+    eval_string(&gc, closure, "(define v (unique 'tag))");
+    ck_assert(eval_bool(&gc, closure, "(= (cons u (cons 1 nil)) (cons u (cons 1 nil)))"));
+    ck_assert(!eval_bool(&gc, closure, "(= (cons u (cons 1 nil)) (cons v (cons 1 nil)))"));
+    ck_assert(!eval_bool(&gc, closure, "(= (cons u nil) '(tag))"));
+    ck_assert(eval_bool(&gc, closure, "(= (cons (cons u nil) nil) (cons (cons u nil) nil))"));
+
+    // Functions are equal only to themselves
+    ck_assert(eval_bool(&gc, closure, "(= car car)"));
+    ck_assert(!eval_bool(&gc, closure, "(= car cdr)"));
+    ck_assert(!eval_bool(&gc, closure, "(= (lambda (x) x) (lambda (x) x))"));
+
+    // match's literal list patterns agree with =
+    ck_assert_str_eq(eval_repr(&gc, closure, "(match (cons 1 (cons 2 nil)) ('(1 2) 'yes) (_ 'no))"), "yes");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 Suite *eval_suite(void)
 {
     Suite *s;
@@ -2738,6 +2780,7 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_uninterned_bindings_do_not_collide);
     tcase_add_test(tc_core, test_match_uninterned);
     tcase_add_test(tc_core, test_match_value_patterns);
+    tcase_add_test(tc_core, test_eq_structural_lists);
     tcase_add_test(tc_core, test_macroexpand_1_user_macro);
     tcase_add_test(tc_core, test_macroexpand_1_let);
     tcase_add_test(tc_core, test_macroexpand_does_not_evaluate);
