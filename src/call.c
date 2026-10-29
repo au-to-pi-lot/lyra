@@ -68,9 +68,10 @@ void assign_args(GC *gc, Closure *closure, Value *params, Value *args) {
     }
 }
 
-Value *expand_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args) {
-    // Expansion-time bindings live in a fresh child of the caller's closure
-    Closure *new_closure = make_closure(gc, closure);
+Value *expand_derived_macro(GC *gc, Derived callable, Value *args) {
+    // The macro body runs lexically: in a fresh child of the closure captured
+    // where the macro was defined, not the caller's.
+    Closure *new_closure = make_closure(gc, callable.closure);
     assign_args(gc, new_closure, callable.params, args);
 
     // Evaluate body to get expansion
@@ -105,7 +106,7 @@ Value *expand_derived_macro(GC *gc, Closure *closure, Derived callable, Value *a
 }
 
 Value *call_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args) {
-    Value *expansion = expand_derived_macro(gc, closure, callable, args);
+    Value *expansion = expand_derived_macro(gc, callable, args);
     if (expansion == NULL) {
         return NULL;
     }
@@ -141,7 +142,7 @@ Value *macroexpand_1(GC *gc, Closure *closure, Value *form, bool *expanded) {
         return form;
     }
 
-    Value *expansion = expand_derived_macro(gc, closure, macro->data.as_derived, list_tail(form));
+    Value *expansion = expand_derived_macro(gc, macro->data.as_derived, list_tail(form));
     if (expansion != NULL && expanded != NULL) {
         *expanded = true;
     }

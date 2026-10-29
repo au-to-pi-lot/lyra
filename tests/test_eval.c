@@ -1037,6 +1037,67 @@ static const char *eval_repr(GC *gc, Closure *closure, const char *src) {
     return utstring_body(repr(gc, result));
 }
 
+// --- macro bodies run in the lexical scope of the macro's definition ---
+
+START_TEST(test_macro_body_is_lexically_scoped)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define helper (lambda (x) (+ x 100)))");
+    eval_string(&gc, closure, "(define-macro m (lambda (x) (helper x)))");
+
+    // The caller shadows `helper`; the macro body must still see its own.
+    Value *result = eval_string(&gc, closure, "((lambda (helper) (m 1)) (lambda (x) 0))");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->data.as_int, 101);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_macro_expansion_define_affects_caller)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *global = make_closure(&gc, NULL);
+    prelude(&gc, global);
+
+    eval_string(&gc, global, "(define-macro defzz (lambda (v) `(define zz ,v)))");
+
+    // Expansion is still evaluated in the caller's closure
+    Closure *caller = make_closure(&gc, global);
+    eval_string(&gc, caller, "(defzz 5)");
+    UT_string *key;
+    utstring_new(key);
+    utstring_printf(key, "zz");
+    ck_assert_ptr_nonnull(get_var(caller, key));
+    ck_assert_ptr_null(get_var(global, key));
+    utstring_free(key);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_expand_macro_1_body_is_lexically_scoped)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    eval_string(&gc, closure, "(define helper (lambda (x) `(from-definition ,x)))");
+    eval_string(&gc, closure, "(define-macro m (lambda (x) (helper x)))");
+    ck_assert_str_eq(
+        eval_repr(&gc, closure, "((lambda (helper) (expand-macro-1 '(m 1))) (lambda (x) 'from-caller))"),
+        "(from-definition 1)");
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 START_TEST(test_expand_macro_1_intrinsic)
 {
     GC gc;
@@ -2044,6 +2105,9 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_macroexpand_1_leaves_non_macro_forms);
     tcase_add_test(tc_core, test_macroexpand_repeats_at_head);
     tcase_add_test(tc_core, test_macroexpand_resolves_in_caller_closure);
+    tcase_add_test(tc_core, test_macro_body_is_lexically_scoped);
+    tcase_add_test(tc_core, test_macro_expansion_define_affects_caller);
+    tcase_add_test(tc_core, test_expand_macro_1_body_is_lexically_scoped);
     tcase_add_test(tc_core, test_expand_macro_1_intrinsic);
     tcase_add_test(tc_core, test_expand_macro_intrinsic);
     tcase_add_test(tc_core, test_expand_macro_non_macro_unchanged);

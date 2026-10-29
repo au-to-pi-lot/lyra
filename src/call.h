@@ -6,7 +6,7 @@ Value *call(GC *gc, Closure *closure, Callable *callable, Value *arguments);
 
 // Run a derived macro's body against (unevaluated) args in a child of
 // `closure` and return the expansion, without evaluating it.
-Value *expand_derived_macro(GC *gc, Closure *closure, Derived callable, Value *args);
+Value *expand_derived_macro(GC *gc, Derived callable, Value *args);
 
 // Expand `form` one step if its head is a symbol bound (in `closure`) to a
 // derived macro. Anything else -- atoms, nil, non-macro heads, intrinsic
