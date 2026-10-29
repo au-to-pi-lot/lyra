@@ -79,7 +79,7 @@ CFLAGS = -Wall -Wextra -std=c11 -g -DDEBUG_MACRO -DDEBUG_QUASIQUOTE
 - **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
 
 **Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
-**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `apply` (purity-polymorphic, conservatively impure)
+**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print` (stdout), `apply` (purity-polymorphic, conservatively impure)
 
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
@@ -168,6 +168,11 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `load-file` - Read file contents as string: `(load-file "module.lyra")` → file contents as a string
 - `eval-string` - Evaluate string as code: `(eval-string "(+ 1 2)")` → `3`
   - Evaluates in **current closure** - definitions affect caller's scope
+
+**Output** (impure):
+- `print` - Write a string to stdout: `(print "hi")` writes `hi` (no trailing newline, flushed), returns `nil`
+  - Exactly one argument, which must be a string; otherwise prints an error and returns `nil`
+  - Writes to `stdout` unless redirected with `intrinsic_set_print_stream(FILE*)` (test hook)
 
 **Higher-Level Forms** (defined in Lisp):
 - `Z` - Z combinator for recursion

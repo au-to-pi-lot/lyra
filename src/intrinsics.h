@@ -52,6 +52,10 @@ Value *intrinsic_is_nil(GC * gc, Closure *closure, Value *args);
 Value *intrinsic_load_file(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args);
 
+// Output
+Value *intrinsic_print(GC *gc, Closure *closure, Value *args);
+void intrinsic_set_print_stream(FILE *stream);  // NULL restores stdout (used by tests)
+
 // Variable access
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args);
 

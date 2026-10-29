@@ -732,6 +732,33 @@ Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args) {
     return result;
 }
 
+static FILE *print_stream = NULL;
+
+void intrinsic_set_print_stream(FILE *stream) {
+    print_stream = stream;
+}
+
+Value *intrinsic_print(GC *gc, Closure *closure, Value *args) {
+    (void)gc;
+    (void)closure;
+    // (print "text") - writes the string to stdout, no trailing newline
+    if (list_length(args) != 1) {
+        printf("print requires exactly one string argument\n");
+        return NIL;
+    }
+
+    Value *val = list_index(args, 0);
+    if (val->type != STRING) {
+        printf("print requires a string argument\n");
+        return NIL;
+    }
+
+    FILE *out = print_stream ? print_stream : stdout;
+    fputs(utstring_body(val->data.as_string), out);
+    fflush(out);
+    return NIL;
+}
+
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     // (get-var 'symbol)

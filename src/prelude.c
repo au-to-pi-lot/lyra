@@ -73,6 +73,7 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function_pure(gc, closure, "gensym", &intrinsic_gensym, false);  // Mutates GC counter
     define_intrinsic_function_pure(gc, closure, "load-file", &intrinsic_load_file, false);  // File I/O
     define_intrinsic_function_pure(gc, closure, "eval-string", &intrinsic_eval_string, false);  // Dynamic evaluation
+    define_intrinsic_function_pure(gc, closure, "print", &intrinsic_print, false);  // Writes to stdout
     define_intrinsic_function_pure(gc, closure, "get-var", &intrinsic_get_var, true);  // Just reads
     define_intrinsic_function_pure(gc, closure, "is-pure", &intrinsic_pure_p, true);  // Purity query
 
