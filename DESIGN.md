@@ -541,6 +541,8 @@ Lyra aims for ahead-of-time compilation and eventual self-hosting.
 - LLVM IR (eventual - better optimization, easier debugging)
 - JIT compilation (eventual - for REPL and dynamic code)
 
+**Purity tracking:** The interpreter once carried an `is_pure` flag on every callable and an `is-pure` intrinsic, but nothing consumed it, so it was removed. It should come back alongside an optimizer that uses it (memoization, reordering, dead-code elimination). Open question from the panic work: can a function that may panic count as pure?
+
 **Self-Hosting Goal:**
 
 Write the Lyra compiler in Lyra itself. Self-hosting is the ultimate test that the language is expressive and ergonomic enough for complex programs.
