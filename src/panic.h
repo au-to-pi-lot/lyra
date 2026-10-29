@@ -63,13 +63,23 @@ void panic_push(PanicHandler *handler);
 // It must be the innermost handler.
 void panic_pop(PanicHandler *handler);
 
+// Exit status of a process ended by a panic, unless one was given explicitly.
+#define PANIC_DEFAULT_STATUS 1
+
 // Raise a panic with a printf-style message. Pops the innermost handler and
 // longjmps to it. With no handler installed, prints the message to stderr
-// and exits with status 1.
+// and exits with PANIC_DEFAULT_STATUS.
 LYRA_NORETURN void lyra_panic(const char *fmt, ...) LYRA_PRINTF_FORMAT(1, 2);
+
+// Same, but a handler that ends the process (file / -c mode, or no handler)
+// exits with `status`. Handlers that don't exit (the REPL) ignore it.
+LYRA_NORETURN void lyra_panic_with_status(int status, const char *fmt, ...) LYRA_PRINTF_FORMAT(2, 3);
 
 // The message of the most recent panic (without any "panic: " prefix).
 const char *panic_message(void);
+
+// The exit status requested by the most recent panic.
+int panic_exit_status(void);
 
 // Print the most recent panic's message in the user-facing format. Flushes
 // stdout first so the message lands after any output the program produced.

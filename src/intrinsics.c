@@ -784,17 +784,44 @@ Value *intrinsic_write(GC *gc, Closure *closure, Value *args) {
 
 // (panic "a" "b" ...) - abort evaluation with the concatenated message.
 // Same argument rules as print/write: strings only, no implicit conversion.
-Value *intrinsic_panic(GC *gc, Closure *closure, Value *args) {
-    (void)closure;
+// Concatenate panic message args, panicking (as `name`) on a non-string.
+static UT_string *panic_message_from_args(GC *gc, Value *args, const char *name) {
     UT_string *message = gc_alloc_string(gc);
     for (Value *p = args; !is_nil(p); p = list_tail(p)) {
         Value *arg = list_head(p);
         if (arg->type != STRING) {
-            lyra_panic("panic requires string arguments");
+            lyra_panic("%s requires string arguments", name);
         }
         utstring_concat(message, arg->data.as_string);
     }
+    return message;
+}
+
+Value *intrinsic_panic(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    UT_string *message = panic_message_from_args(gc, args, "panic");
     lyra_panic("%s", utstring_body(message));
+}
+
+// (panic-with-status status "a" "b" ...) - like panic, but when the panic
+// ends the process (file / -c mode) it exits with `status`, an int in
+// 1..255. In the REPL it behaves exactly like panic: the status is ignored.
+Value *intrinsic_panic_with_status(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    if (is_nil(args)) {
+        lyra_panic("panic-with-status requires an exit status");
+    }
+    Value *status = list_head(args);
+    if (status->type != INT) {
+        lyra_panic("panic-with-status requires an int exit status, got %s",
+                   utstring_body(repr(gc, status)));
+    }
+    if (status->data.as_int < 1 || status->data.as_int > 255) {
+        lyra_panic("panic-with-status exit status must be between 1 and 255, got %d",
+                   status->data.as_int);
+    }
+    UT_string *message = panic_message_from_args(gc, list_tail(args), "panic-with-status");
+    lyra_panic_with_status(status->data.as_int, "%s", utstring_body(message));
 }
 
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args) {

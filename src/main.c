@@ -136,14 +136,14 @@ static void eval_source(GC *gc, Closure *global, const char *source, const char 
 }
 
 // eval_source under a panic handler: a panic is reported on stderr and
-// exits with status 1.
+// exits with the panic's status (1 unless panic-with-status gave one).
 static void run_source(GC *gc, Closure *global, const char *source, const char *context, char *owned) {
     PanicHandler handler;
     panic_push(&handler);
     if (setjmp(handler.env) != 0) {
         panic_report();
         free(owned);
-        exit(1);
+        exit(panic_exit_status());
     }
     eval_source(gc, global, source, context, owned);
     panic_pop(&handler);

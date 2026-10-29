@@ -2097,7 +2097,46 @@ START_TEST(test_panic_intrinsic)
     eval_string(&gc, closure, "(define f (lambda (x) (if (= x 0) (panic \"bottom\") (f (- x 1)))))");
     ck_assert_panics(&gc, closure, "(+ 1 (f 50))", "bottom");
 
+    // Plain panics request the default exit status
+    ck_assert_panics(&gc, closure, "(panic \"x\")", "x");
+    ck_assert_int_eq(panic_exit_status(), 1);
+
     Value *result = eval_string(&gc, closure, "(is-pure panic)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(result->data.as_boolean == false);
+
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_panic_with_status)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    ck_assert_panics(&gc, closure, "(panic-with-status 3 \"bad \" \"config\")", "bad config");
+    ck_assert_int_eq(panic_exit_status(), 3);
+    ck_assert_panics(&gc, closure, "(panic-with-status 255)", "");
+    ck_assert_int_eq(panic_exit_status(), 255);
+
+    // A later plain panic goes back to the default status
+    ck_assert_panics(&gc, closure, "(panic \"again\")", "again");
+    ck_assert_int_eq(panic_exit_status(), 1);
+
+    // Argument errors are ordinary panics (status 1)
+    ck_assert_panics(&gc, closure, "(panic-with-status)", "panic-with-status requires an exit status");
+    ck_assert_panics(&gc, closure, "(panic-with-status \"oops\")",
+                     "panic-with-status requires an int exit status, got \"oops\"");
+    ck_assert_panics(&gc, closure, "(panic-with-status 0 \"ok?\")",
+                     "panic-with-status exit status must be between 1 and 255, got 0");
+    ck_assert_panics(&gc, closure, "(panic-with-status 256)",
+                     "panic-with-status exit status must be between 1 and 255, got 256");
+    ck_assert_panics(&gc, closure, "(panic-with-status 2 42)", "panic-with-status requires string arguments");
+    ck_assert_int_eq(panic_exit_status(), 1);
+
+    Value *result = eval_string(&gc, closure, "(is-pure panic-with-status)");
     ck_assert_ptr_nonnull(result);
     ck_assert(result->data.as_boolean == false);
 
@@ -2241,6 +2280,7 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_eval_integer);
     tcase_add_test(tc_core, test_print);
     tcase_add_test(tc_core, test_panic_intrinsic);
+    tcase_add_test(tc_core, test_panic_with_status);
     tcase_add_test(tc_core, test_panic_programmer_errors);
     tcase_add_test(tc_core, test_panic_io_failures_are_not_panics);
     tcase_add_test(tc_core, test_panic_session_survives);

@@ -80,7 +80,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
 - **No catching from Lyra code**: only C installs handlers. A panic always unwinds to the top level
 - **Top-level handlers** ([src/main.c](src/main.c)):
   - REPL (`repl_eval`): prints `panic: <message>` to **stderr**, returns to the prompt. The session survives; definitions completed before the panic are kept (nothing is rolled back)
-  - File and `-c` mode (`run_source`): prints `panic: <message>` to stderr and exits with status 1
+  - File and `-c` mode (`run_source`): prints `panic: <message>` to stderr and exits with `panic_exit_status()`: 1 (`PANIC_DEFAULT_STATUS`) unless the panic came from `lyra_panic_with_status` / `panic-with-status`
   - `panic_report()` flushes stdout before writing to stderr so output ordering is sane
 - **What panics**: undefined variables (`undefined variable: \`x\``), non-callable call heads (`not callable: 5`), arity/type errors in intrinsics, malformed `lambda` parameter lists, `define-macro` on a non-function, `match` with no matching clause, `eval-string` parse errors, and explicit `(panic ...)`
 - **What doesn't (yet)**: I/O failures (`load-file` can't open a file, `list-directory` can't open a directory) still print and return `nil`; they're marked `// TODO: result` and will become err results. `get-var` on an unbound symbol returns `nil` by design (the module system uses it as a "defined?" check). Many intrinsics still silently return `nil` on bad input without any message (e.g. `(car 5)`, `(+ 1 "a")`, `(divmod 1)`); converting those is follow-up work
@@ -104,7 +104,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
 - **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
 
 **Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
-**Impure intrinsics**: `panic` (aborts evaluation), `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
+**Impure intrinsics**: `panic`/`panic-with-status` (abort evaluation), `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
 
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
@@ -212,6 +212,9 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `panic` - Abort evaluation with a message: `(panic "bad value: " (string x))`
   - Same argument rules as `print`: any number of strings, concatenated with no separator; a non-string argument is itself a panic (`panic requires string arguments`). `(panic)` has an empty message
   - Not catchable from Lyra code; see the Panics section
+- `panic-with-status` - Same, with an explicit process exit status first: `(panic-with-status 2 "bad config: " path)`
+  - Status must be an int in 1..255 (0 would report success; POSIX truncates beyond 255); otherwise it's an ordinary status-1 panic
+  - In file / `-c` mode the process exits with that status. In the REPL it behaves exactly like `panic` (message printed, back to the prompt, status ignored)
 
 **Higher-Level Forms** (defined in Lisp):
 - `Z` - Z combinator for recursion
@@ -434,8 +437,8 @@ The Lyra interpreter supports multiple modes:
 - Each `gensym()` call returns a unique symbol (G__0, G__1, ...)
 
 ## Testing
-- **Test Coverage**: 124 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
-  - `test_eval.c`: 85 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
+- **Test Coverage**: 125 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
+  - `test_eval.c`: 86 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
   - `test_parser.c`: 14 tests covering lexing and parsing
 - Run tests with `make test` (Linux/macOS) or `ctest --test-dir build -C Debug` (Windows)
