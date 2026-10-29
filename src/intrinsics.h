@@ -74,6 +74,12 @@ Value *intrinsic_pure_p(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_begin(GC *gc, Closure *closure, Value *args);
 
 // Type constructors
+Value *intrinsic_int(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_truncate(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_floor(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_ceiling(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_round(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_float(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_string(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_symbol(GC *gc, Closure *closure, Value *args);
 

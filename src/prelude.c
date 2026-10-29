@@ -96,6 +96,12 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function_pure(gc, closure, "is-nil", &intrinsic_is_nil, true);
 
     // Type constructors
+    define_intrinsic_function_pure(gc, closure, "int", &intrinsic_int, true);
+    define_intrinsic_function_pure(gc, closure, "truncate", &intrinsic_truncate, true);
+    define_intrinsic_function_pure(gc, closure, "floor", &intrinsic_floor, true);
+    define_intrinsic_function_pure(gc, closure, "ceiling", &intrinsic_ceiling, true);
+    define_intrinsic_function_pure(gc, closure, "round", &intrinsic_round, true);
+    define_intrinsic_function_pure(gc, closure, "float", &intrinsic_float, true);
     define_intrinsic_function_pure(gc, closure, "string", &intrinsic_string, true);
     define_intrinsic_function_pure(gc, closure, "symbol", &intrinsic_symbol, true);
 

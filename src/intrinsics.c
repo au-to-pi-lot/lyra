@@ -1,3 +1,4 @@
+#include <math.h>
 #include "intrinsics.h"
 #include "eval.h"
 #include "closure.h"
@@ -282,40 +283,41 @@ static void expect_list(GC *gc, const char *name, Value *v) {
     }
 }
 
-// Shared by + - * : folds `args` left to right. Ints stay ints until the
-// first float, after which the accumulator is a float (see ARCHITECTURE.md).
+// Shared by + - * : folds `args` left to right. All operands must be the same
+// numeric type (all ints or all floats); mixing them panics, since Lyra has no
+// implicit conversions (use `int` / `float` to convert explicitly).
 // For - the first argument is the starting value instead of being subtracted.
+// The empty fold is the int identity (0 for +, 1 for *); (-) panics.
+// With a single argument, - negates it.
 typedef enum { ARITH_ADD, ARITH_SUB, ARITH_MUL } ArithOp;
 
 static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
     int int_result = (op == ARITH_MUL) ? 1 : 0;
     float float_result = 0.0f;
-    bool has_float = false;
-    bool first = true;
+    Value *first_arg = NULL;  // determines the type of the whole fold
+    Value *all_args = args;
 
     for (; !is_nil(args); args = list_tail(args)) {
         Value *arg = list_head(args);
         expect_number(gc, name, arg);
 
-        if (first && op == ARITH_SUB) {
+        if (!first_arg) {
+            first_arg = arg;
             if (arg->type == FLOAT) {
-                has_float = true;
-                float_result = arg->data.as_float;
-            } else {
-                int_result = arg->data.as_int;
+                float_result = (op == ARITH_MUL) ? 1.0f : 0.0f;
             }
-            first = false;
-            continue;
+            if (op == ARITH_SUB) {
+                if (arg->type == FLOAT) float_result = arg->data.as_float;
+                else int_result = arg->data.as_int;
+                continue;
+            }
+        } else if (arg->type != first_arg->type) {
+            lyra_panic("%s cannot combine %s and %s: mixed int and float", name,
+                       utstring_body(repr(gc, first_arg)), utstring_body(repr(gc, arg)));
         }
-        first = false;
 
-        if (arg->type == FLOAT && !has_float) {
-            float_result = (float)int_result;
-            has_float = true;
-        }
-
-        if (has_float) {
-            float operand = (arg->type == FLOAT) ? arg->data.as_float : (float)arg->data.as_int;
+        if (arg->type == FLOAT) {
+            float operand = arg->data.as_float;
             switch (op) {
                 case ARITH_ADD: float_result += operand; break;
                 case ARITH_SUB: float_result -= operand; break;
@@ -331,7 +333,18 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
         }
     }
 
-    return has_float ? make_float(gc, float_result) : make_int(gc, int_result);
+    if (op == ARITH_SUB && !first_arg) {
+        lyra_panic("- expects at least 1 argument, but got 0");
+    }
+    if (op == ARITH_SUB && is_nil(list_tail(all_args))) {
+        // (- x) negates
+        if (first_arg->type == FLOAT) return make_float(gc, -float_result);
+        if (int_result == INT_MIN) lyra_panic("integer overflow in -");
+        return make_int(gc, -int_result);
+    }
+
+    if (first_arg && first_arg->type == FLOAT) return make_float(gc, float_result);
+    return make_int(gc, int_result);
 }
 
 Value *intrinsic_add(GC *gc, Closure *closure, Value *args) {
@@ -354,16 +367,31 @@ Value *intrinsic_mul(GC *gc, Closure *closure, Value *args) {
 
 Value *intrinsic_div(GC *gc, Closure *closure, Value *args) {
     (void)closure;
-    // (/ arg1 arg2 ...) -- division always produces a float
-    if (is_nil(args)) return make_float(gc, 1.0);
+    // (/ x) is 1/x; (/ arg1 arg2 ...) -- true division, always produces a float. int/int
+    // converts to float (as in Python 3); mixed int/float panics.
+    if (is_nil(args)) {
+        lyra_panic("/ expects at least 1 argument, but got 0");
+    }
 
     Value *first = list_head(args);
     expect_number(gc, "/", first);
     float float_result = (first->type == FLOAT) ? first->data.as_float : (float)first->data.as_int;
 
+    // (/ x) is the reciprocal 1/x
+    if (is_nil(list_tail(args))) {
+        if (float_result == 0.0f) {
+            lyra_panic("division by zero");
+        }
+        return make_float(gc, 1.0f / float_result);
+    }
+
     for (args = list_tail(args); !is_nil(args); args = list_tail(args)) {
         Value *arg = list_head(args);
         expect_number(gc, "/", arg);
+        if (arg->type != first->type) {
+            lyra_panic("/ cannot combine %s and %s: mixed int and float",
+                       utstring_body(repr(gc, first)), utstring_body(repr(gc, arg)));
+        }
         float divisor = (arg->type == FLOAT) ? arg->data.as_float : (float)arg->data.as_int;
         if (divisor == 0.0f) {
             lyra_panic("division by zero");
@@ -396,6 +424,12 @@ Value *intrinsic_divmod(GC *gc, Closure *closure, Value *args) {
 
     int quot = dividend->data.as_int / divisor->data.as_int;
     int rem = dividend->data.as_int % divisor->data.as_int;
+    // C truncates toward zero; adjust to floor (Python style): the remainder
+    // takes the divisor's sign.
+    if (rem != 0 && ((rem < 0) != (divisor->data.as_int < 0))) {
+        quot -= 1;
+        rem += divisor->data.as_int;
+    }
 
     Value *quot_val = make_int(gc, quot);
     Value *rem_val = make_int(gc, rem);
@@ -853,6 +887,73 @@ Value *intrinsic_begin(GC *gc, Closure *closure, Value *args) {
         args = list_tail(args);
     }
     return result;
+}
+
+typedef enum { ROUND_TRUNC, ROUND_FLOOR, ROUND_CEIL, ROUND_AWAY } RoundMode;
+
+// Shared by int/floor/ceiling/round: float -> int with the given rounding.
+// Ints pass through. NaN, infinity and out-of-range results panic.
+static Value *float_to_int(GC *gc, const char *name, RoundMode mode, Value *args) {
+    expect_arity(name, args, 1);
+    Value *v = list_head(args);
+    if (v->type == INT) return v;
+    if (v->type != FLOAT) {
+        lyra_panic("%s expects a number, but got %s", name, utstring_body(repr(gc, v)));
+    }
+    float f = v->data.as_float;
+    switch (mode) {
+        case ROUND_TRUNC: f = truncf(f); break;
+        case ROUND_FLOOR: f = floorf(f); break;
+        case ROUND_CEIL:  f = ceilf(f); break;
+        case ROUND_AWAY:  f = roundf(f); break;  // ties away from zero
+    }
+    // [-2^31, 2^31) are exactly representable bounds in float32; the negated
+    // comparison also rejects NaN.
+    if (!(f >= -2147483648.0f && f < 2147483648.0f)) {
+        lyra_panic("%s cannot convert %s: out of range", name, utstring_body(repr(gc, v)));
+    }
+    return make_int(gc, (int)f);
+}
+
+Value *intrinsic_int(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    // (int x): truncate toward zero
+    return float_to_int(gc, "int", ROUND_TRUNC, args);
+}
+
+Value *intrinsic_truncate(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    // Alias of int's float -> int behavior
+    return float_to_int(gc, "truncate", ROUND_TRUNC, args);
+}
+
+Value *intrinsic_floor(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    return float_to_int(gc, "floor", ROUND_FLOOR, args);
+}
+
+Value *intrinsic_ceiling(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    return float_to_int(gc, "ceiling", ROUND_CEIL, args);
+}
+
+Value *intrinsic_round(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    // Ties round away from zero: (round 2.5) => 3, (round -2.5) => -3
+    return float_to_int(gc, "round", ROUND_AWAY, args);
+}
+
+Value *intrinsic_float(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    // (float x) => float. Floats pass through; ints convert (rounding to the
+    // nearest float32 above 2^24, where precision is lost).
+    expect_arity("float", args, 1);
+    Value *v = list_head(args);
+    if (v->type == FLOAT) return v;
+    if (v->type != INT) {
+        lyra_panic("float expects a number, but got %s", utstring_body(repr(gc, v)));
+    }
+    return make_float(gc, (float)v->data.as_int);
 }
 
 Value *intrinsic_string(GC *gc, Closure *closure, Value *args) {

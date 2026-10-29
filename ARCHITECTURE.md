@@ -84,8 +84,8 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
   - `panic_report()` flushes stdout before writing to stderr so output ordering is sane
 - **What panics**: undefined variables (`undefined variable: \`x\``), non-callable call heads (`not callable: 5`), arity/type errors in intrinsics, malformed `lambda` parameter lists, `define-macro` on a non-function, `match` with no matching clause or with `,@` in a pattern, `eval-string` parse errors, and explicit `(panic ...)`
 - **What doesn't (yet)**: I/O failures (`load-file` can't open a file, `list-directory` can't open a directory) still print and return `nil`; they're marked `// TODO: result` and will become err results. `get-var` on an unbound symbol returns `nil` by design (the module system uses it as a "defined?" check).
-- **Bad arguments** (message style `<name> expects ..., but got <repr>`): wrong arity almost everywhere (`car`, `cons`, `=`, `<`, `divmod`, `apply`, the `is-*` predicates, `if`, `define`, `quote`, ...); non-numbers to `+ - * / < <= > >=`; non-lists to `car`/`cdr`/`cons`/`apply`; non-integers to `divmod`; `division by zero` from `/` and `divmod`; calling a derived function or macro with the wrong number of arguments (`wrong number of arguments: expected 2, but got 1`, or `expected at least N` with a variadic) and destructuring a non-list
-- **Deliberately not panics**: `(car nil)`/`(cdr nil)` are `nil`; `=` across different types (including `(= 1 1.0)`) is `false`. `()` evaluates to `nil` (self-evaluating, so `(())` panics with `not callable: ()`). `<`/`<=`/`>`/`>=` panic on mixed int/float even though `+ - * /` promote
+- **Bad arguments** (message style `<name> expects ..., but got <repr>`): wrong arity almost everywhere (`car`, `cons`, `=`, `<`, `divmod`, `apply`, the `is-*` predicates, `if`, `define`, `quote`, ...); non-numbers to `+ - * / < <= > >=`; mixed int/float operands to `+ - * / < <= > >=` (`+ cannot combine 1 and 2.5: mixed int and float`); `int`/`truncate`/`floor`/`ceiling`/`round`/`float` of a non-number, and float to int conversions of NaN/infinity/out-of-range floats; `(-)` and `(/)` with no arguments; `integer overflow in -` and `in divmod`; non-lists to `car`/`cdr`/`cons`/`apply`; non-integers to `divmod`; `division by zero` from `/` and `divmod`; calling a derived function or macro with the wrong number of arguments (`wrong number of arguments: expected 2, but got 1`, or `expected at least N` with a variadic) and destructuring a non-list
+- **Deliberately not panics**: `(car nil)`/`(cdr nil)` are `nil`; `=` across different types (including `(= 1 1.0)`) is `false`. `()` evaluates to `nil` (self-evaluating, so `(())` panics with `not callable: ()`). There is no implicit int/float conversion anywhere; use `int`/`float`
 - **GC safety**: collection runs only at top-level safe points (after a REPL expression / file / `-c` run), never mid-evaluation, so a panic can't interrupt a collection. Whatever the aborted evaluation allocated stays registered and is swept by the next `gc_collect` if unreachable. `gc_alloc_cons` initializes `car`/`cdr` to `NIL`, so a half-built list never holds garbage pointers
 - **Parser memory**: the parser never panics; it reports failure by returning `NULL`. So its manually managed tokens can't leak through a `longjmp`. Callers that turn a parse failure into a panic (`eval-string`) do so after `parse_with_pos` has returned
 - **setjmp hygiene**: keep functions that call `setjmp` small (`repl_eval`, `run_source`, the test helpers), so no locals change between `setjmp` and a possible `longjmp`. Locals that must be read in the panic branch after being changed need `volatile`
@@ -112,7 +112,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
 - **Query at runtime**: `(is-pure fn)` returns true/false
 - **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
 
-**Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
+**Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `int`, `truncate`, `floor`, `ceiling`, `round`, `float`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
 **Impure intrinsics**: `panic`/`panic-with-status` (abort evaluation), `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
 
 ## Recursion & Macros
@@ -161,8 +161,12 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - See Module System section for details
 
 **Arithmetic**:
-- `+`, `-`, `*`, `/` - Basic arithmetic (variadic, auto-promote int→float)
-- `divmod` - Integer division with remainder: `(divmod 17 5)` → `(3 2)`
+- `+`, `-`, `*` - Basic arithmetic (variadic). All operands must be the same numeric type; mixing int and float panics (no implicit conversion). `(+)` is `0`, `(*)` is `1`, `(- x)` negates (`(- 5)` is `-5`; negating the minimum int panics with `integer overflow in -`); `(-)` panics with `- expects at least 1 argument, but got 0`.
+- `/` - True division, always returns a float. `(/ x)` is the reciprocal `1/x` (`(/ 4)` is `0.25`, `(/ 2.0)` is `0.5`; an int argument converts to float); `(/)` panics with `/ expects at least 1 argument, but got 0`. int/int converts both operands to float first, as in Python 3 (`(/ 7 2)` is `3.5`; lossy above 2^24 since floats are 32-bit). float/float divides; mixed int/float panics. Division by zero panics.
+- `int`, `truncate` - float to int, truncating toward zero; ints pass through; NaN, infinity and out-of-range values panic
+- `floor`, `ceiling`, `round` - float to int like `int`. `round` ties go away from zero: `(round 2.5)` is `3`, `(round -2.5)` is `-3`
+- `float` - `(float x)`: floats pass through; ints convert. Lossy by design: ints beyond +-2^24 round to the nearest float32 (e.g. `(float 16777217)` is `16777216.0`), because floats are 32-bit
+- `divmod` - Integer division with remainder: `(divmod 17 5)` → `(3 2)`. Floors, matching Python's `divmod`: the quotient rounds toward negative infinity and the remainder takes the divisor's sign, e.g. `(divmod -7 2)` is `(-4 1)` and `(divmod 7 -2)` is `(-4 -1)`. A truncating pair could be added later under a separate name
 - `=` - Equality test: `(= a b)`. Values of different types are never equal (`(= 1 1.0)` → `false`)
   - Atoms: numbers by value, strings by contents, booleans by value, interned symbols by name, uninterned symbols (`unique`/`gensym`) by identity
   - Lists are compared **structurally**, recursively, applying the atom rules at every level: `(= '(1 (2 "x")) '(1 (2 "x")))` → `true`. A list of uniques equals another only if it holds the same uniques
