@@ -88,7 +88,7 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<main-checkout>/external/vcpkg/script
 - **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
 
 **Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
-**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `apply` (purity-polymorphic, conservatively impure)
+**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
 
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
@@ -172,6 +172,12 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `get-var` - Get value of variable by symbol: `(get-var 'x)` → value of x
   - Used internally by module system
 - `is-pure` - Check if function is pure: `(is-pure +)` → `true`
+- `expand-macro-1` - Expand a quoted form **one step** without evaluating it: `(expand-macro-1 '(let ((x 1)) x))` → `((lambda (x) x) 1)`
+- `expand-macro` - Expand repeatedly **at the head** until the head is no longer a macro (subforms are not expanded): `(expand-macro '(fn id (x) x))` → `(define id (Z (lambda (id) (lambda (x) x))))`
+  - Both are ordinary functions, so the form must be quoted (it may also be computed); the head is resolved in the caller's scope
+  - Only derived (user/prelude) macros expand. Special forms (`if`, `lambda`, `define`, ...), function calls, unbound heads and atoms come back unchanged
+  - No `expand-macro-all`: a tree walker (e.g. a compiler written in Lyra) is expected to call these itself
+  - Impure: expansion runs the macro body (which may call `gensym`, etc.). Strictly, purity depends on the macro being expanded
 
 **File I/O** (impure):
 - `load-file` - Read file contents as string: `(load-file "module.lyra")` → file contents as a string
@@ -355,7 +361,9 @@ The Lyra interpreter supports multiple modes:
 - **Macro argument binding bug** ([src/call.c:87](src/call.c#L87)): Was using `list_head(args)` instead of `list_head(args_iter)` when binding macro parameters, causing incorrect argument binding when iterating through parameter list. This caused the `fn` macro to fail because parameters were bound to wrong values.
 
 ### Code Patterns
-- **Macro expansion**: Macros receive unevaluated arguments, expand them in macro's closure, then evaluate the expansion in the caller's closure ([src/call.c:133-134](src/call.c#L133-L134))
+- **Macro expansion**: Macros receive unevaluated arguments, expand them in a fresh child of the **caller's** closure (expansion-time `define`s stay there and don't leak), then evaluate the expansion in the caller's closure ([src/call.c](src/call.c), `call_derived_macro`)
+  - Expansion and evaluation are separate steps: `expand_derived_macro` produces the expansion only, and `call_derived_macro` = expand + `eval_s_expr`
+  - `macroexpand_1` / `macroexpand` ([src/call.h](src/call.h)) are the C-level "expand without evaluating" helpers behind the `expand-macro-1` / `expand-macro` intrinsics: they resolve the head symbol in the given closure like `eval_s_expr` does, expand only **derived** macros (special forms / intrinsic macros, functions, unbound or non-symbol heads, and atoms come back unchanged, by pointer), and never descend into subforms. `macroexpand` repeats at the head until the form stops being a derived-macro call
 - **Function application**: Functions receive evaluated arguments and execute in a new closure derived from their definition environment
 - **`begin` special form**: Critical for macros - evaluates expressions sequentially in the **current** closure without creating a new scope
   - This allows `define` in macro expansions to affect the caller's scope
