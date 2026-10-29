@@ -39,6 +39,15 @@ CFLAGS = -Wall -Wextra -std=c11 -g -DDEBUG_MACRO -DDEBUG_QUASIQUOTE
 - `replxx::replxx`'s exported target links `Threads::Threads`, so `find_package(Threads REQUIRED)` must run before `find_package(replxx CONFIG REQUIRED)`.
 - Verified working: `cmake -S . -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Debug` - all 90 tests pass via `ctest`, and the CLI/REPL/module-import/match all work correctly.
 
+### Building in a git worktree
+Implementer subagents work in git worktrees (under `.claude/worktrees/`), and `git worktree add` doesn't check out submodules, so `external/vcpkg/` is empty there. `CMakeLists.txt` defaults `CMAKE_TOOLCHAIN_FILE` to that path, so configuring fails. Point it at the main checkout's vcpkg instead:
+```bash
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<main-checkout>/external/vcpkg/scripts/buildsystems/vcpkg.cmake
+```
+(`git submodule update --init` inside the worktree also works, but it re-clones vcpkg, which is slow.) The Makefile's `install` target expects `./external/vcpkg` too, so on Linux/macOS the same issue applies there.
+
+**Concurrent MSVC builds**: when two worktrees built at the same time, one `cl.exe` compile hung for about 10 minutes, sitting idle. Killing it and rebuilding worked fine. The cause is unconfirmed (possibly contention over the shared PDB server, `mspdbsrv.exe`). If a build stalls with an idle compiler, kill it and retry before you debug anything else.
+
 ## Memory Management
 - **GC Implementation**: Basic mark-and-sweep garbage collector in `src/gc.c`
   - All allocations tracked in a linked list via `GCObject` headers
