@@ -741,20 +741,19 @@ void intrinsic_set_print_stream(FILE *stream) {
 Value *intrinsic_print(GC *gc, Closure *closure, Value *args) {
     (void)gc;
     (void)closure;
-    // (print "text") - writes the string to stdout, no trailing newline
-    if (list_length(args) != 1) {
-        printf("print requires exactly one string argument\n");
-        return NIL;
-    }
-
-    Value *val = list_index(args, 0);
-    if (val->type != STRING) {
-        printf("print requires a string argument\n");
-        return NIL;
+    // (print "a" "b" ...) - concatenates string args (no separator) to stdout, no trailing newline.
+    // All args are validated before anything is written; zero args prints nothing.
+    for (Value *p = args; !is_nil(p); p = list_tail(p)) {
+        if (list_head(p)->type != STRING) {
+            printf("print requires string arguments\n");
+            return NIL;
+        }
     }
 
     FILE *out = print_stream ? print_stream : stdout;
-    fputs(utstring_body(val->data.as_string), out);
+    for (Value *p = args; !is_nil(p); p = list_tail(p)) {
+        fputs(utstring_body(list_head(p)->data.as_string), out);
+    }
     fflush(out);
     return NIL;
 }

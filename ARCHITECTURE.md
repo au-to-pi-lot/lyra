@@ -170,8 +170,8 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - Evaluates in **current closure** - definitions affect caller's scope
 
 **Output** (impure):
-- `print` - Write a string to stdout: `(print "hi")` writes `hi` (no trailing newline, flushed), returns `nil`
-  - Exactly one argument, which must be a string; otherwise prints an error and returns `nil`
+- `print` - Write a string to stdout: `(print "a" "b")` writes `ab` (args concatenated, no separator; no trailing newline; flushed), returns `nil`
+  - Any number of arguments, all of which must be strings (no implicit conversion); otherwise prints an error, writes nothing, and returns `nil`. Zero arguments prints nothing
   - Writes to `stdout` unless redirected with `intrinsic_set_print_stream(FILE*)` (test hook)
 
 **Higher-Level Forms** (defined in Lisp):
