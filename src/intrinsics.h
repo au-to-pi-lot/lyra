@@ -54,6 +54,7 @@ Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args);
 
 // Output
 Value *intrinsic_print(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_write(GC *gc, Closure *closure, Value *args);
 void intrinsic_set_print_stream(FILE *stream);  // NULL restores stdout (used by tests)
 
 // Variable access

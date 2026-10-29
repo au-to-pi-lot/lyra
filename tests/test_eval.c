@@ -1703,14 +1703,19 @@ START_TEST(test_print)
     ck_assert_ptr_nonnull(tmp);
     intrinsic_set_print_stream(tmp);
 
-    Value *result = eval_string(&gc, closure, "(print \"hello\")");
+    Value *result = eval_string(&gc, closure, "(write \"hello\")");
     ck_assert_ptr_nonnull(result);
     ck_assert(is_nil(result));
-    eval_string(&gc, closure, "(print \" world\")");
-    eval_string(&gc, closure, "(print \"a\" \"b\" \"c\")");
+    eval_string(&gc, closure, "(write \" world\")");
+    eval_string(&gc, closure, "(write \"a\" \"b\" \"c\")");
+    eval_string(&gc, closure, "(write)");
+    eval_string(&gc, closure, "(write \"x\" 42)");  // all-or-nothing: writes nothing
+    eval_string(&gc, closure, "(write 42)");  // error path writes nothing to the stream
+
+    // print adds a newline; (print) is just a newline; errors write nothing
+    eval_string(&gc, closure, "(print \"p\" \"q\")");
     eval_string(&gc, closure, "(print)");
-    eval_string(&gc, closure, "(print \"x\" 42)");  // all-or-nothing: writes nothing
-    eval_string(&gc, closure, "(print 42)");  // error path writes nothing to the stream
+    eval_string(&gc, closure, "(print 1)");
 
     intrinsic_set_print_stream(NULL);
     rewind(tmp);
@@ -1718,9 +1723,12 @@ START_TEST(test_print)
     size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
     buf[n] = '\0';
     fclose(tmp);
-    ck_assert_str_eq(buf, "hello worldabc");
+    ck_assert_str_eq(buf, "hello worldabcpq\n\n");
 
     result = eval_string(&gc, closure, "(is-pure print)");
+    ck_assert_ptr_nonnull(result);
+    ck_assert(result->data.as_boolean == false);
+    result = eval_string(&gc, closure, "(is-pure write)");
     ck_assert_ptr_nonnull(result);
     ck_assert(result->data.as_boolean == false);
 

@@ -79,7 +79,7 @@ CFLAGS = -Wall -Wextra -std=c11 -g -DDEBUG_MACRO -DDEBUG_QUASIQUOTE
 - **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
 
 **Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
-**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print` (stdout), `apply` (purity-polymorphic, conservatively impure)
+**Impure intrinsics**: `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `apply` (purity-polymorphic, conservatively impure)
 
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
@@ -170,9 +170,12 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - Evaluates in **current closure** - definitions affect caller's scope
 
 **Output** (impure):
-- `print` - Write a string to stdout: `(print "a" "b")` writes `ab` (args concatenated, no separator; no trailing newline; flushed), returns `nil`
-  - Any number of arguments, all of which must be strings (no implicit conversion); otherwise prints an error, writes nothing, and returns `nil`. Zero arguments prints nothing
-  - Writes to `stdout` unless redirected with `intrinsic_set_print_stream(FILE*)` (test hook)
+- `print` - Write strings to stdout followed by a newline: `(print "a" "b")` writes `ab` + newline, returns `nil`
+  - Any number of arguments, all of which must be strings (no implicit conversion); otherwise prints an error, writes nothing, and returns `nil`. `(print)` emits just a newline
+- `write` - Same as `print` but with no trailing newline: `(write "a" "b")` writes `ab`
+  - Both share `write_strings` in `intrinsics.c` and flush after every call
+  - Named `write` so a later task can add a file-handle first argument
+  - Output goes to `stdout` unless redirected with `intrinsic_set_print_stream(FILE*)` (test hook)
 
 **Higher-Level Forms** (defined in Lisp):
 - `Z` - Z combinator for recursion
