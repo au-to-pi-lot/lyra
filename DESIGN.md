@@ -21,7 +21,7 @@ Lyra is a high-performance, garbage-collected, functional-first programming lang
 - Starting implementation base
 
 ### Clojure
-- Spelling: `true`, `false`, `nil`
+- Spelling: `true`, `false`, `nil` (`nil` is provisional; see "Absence: `Option`, not `nil`" under Error Handling)
 - No explicit user-level cons cells
 - Additional bracket syntax for data structures `[]` `{}`
 
@@ -401,11 +401,10 @@ Inspired by C# namespaces to avoid Python's circular import problems.
 
 **Iterator Protocol (low-level):**
 ```scheme
-(has-next? iter) -> bool
-(next iter) -> value
+(next iter) -> Option[value]   ; Some(value), or None when exhausted
 ```
 
-Or simpler: return `nil` when exhausted (Lua-style).
+Not a `nil` sentinel (Lua-style): a sentinel can't be told apart from a real element, so iterating a list of lists would stop at the first `[]` once `nil` means the empty list.
 
 **High-Level Abstractions:**
 - `(for [x iterable] ...)` - loop over any iterable
@@ -633,6 +632,8 @@ Lyra uses lightweight green threads (Go-style goroutines) for concurrency, not a
 - Cheap thread spawning (thousands/millions of threads)
 - M:N scheduling (many green threads on N OS threads)
 
+**Structured concurrency:** with green threads at the core, leaked tasks are a real risk. In Go, a goroutine can outlive everything that cares about it, so errors vanish and leaks are found in production. A spawned task's lifetime should be bounded by a scope that waits for it, with cancellation propagating down and failures up (Trio nurseries, Kotlin coroutine scopes). What exactly `spawn` means under this is open: #18. Settle it before the scheduler is built.
+
 **Primitives:**
 - `(spawn expr)` or `(go expr)` - spawn green thread
 - Channels (CSP-style) - thread-safe message passing
@@ -696,6 +697,10 @@ match divide(10, 0):
     Err(e) -> println("Error: " e)
 ```
 
+**Absence: `Option`, not `nil`:**
+
+`nil` exists today because the interpreter is dynamically typed, and it is provisional. Once the static type system lands, `nil` is at most a synonym for the empty list, and "no value" is spelled `Option`. Partial functions return `Option` (or similar) instead of failing or returning a sentinel: `(head [])` is `None`, not a crash. (Haskell's `head`, decision in #19.)
+
 **Panics for Unrecoverable Errors:**
 ```scheme
 panic("Unreachable code reached!")  ; Unwinds, prints stack trace, kills thread/program
@@ -753,16 +758,23 @@ Reflection is primarily for tooling, not core language features.
 
 ## Strings and Numeric Types
 
-**Strings:**
-- UTF-8 encoded immutable byte arrays
-- Indexing returns code points (not bytes)
-- Separate mutable byte buffers for performance-critical code
+**Strings (Rust's model):**
+- Immutable, always valid UTF-8. Text and raw bytes are distinct types, and converting between them names the encoding explicitly (Python's lesson). Invalid input is an error at the conversion, never a silently corrupted string.
+- **No integer indexing by code point.** On UTF-8 that would be O(n) per access, and code points aren't user-perceived characters anyway ("é" may be one or two; a flag emoji is two).
+- Slicing uses **byte offsets**, which must fall on character boundaries. Searching returns byte offsets, so search-then-slice is O(1).
+- Code points and grapheme clusters are reached by **iteration** (`chars`, `graphemes`), not indexing.
+- **Byte access is first-class**: viewing a string's bytes is cheap and needs no copy, because it matters even for Unicode text (protocols, hashing, parsing).
+- No Python-style variable-width storage (PEP 393) to buy O(1) code-point indexing.
+- Separate mutable byte buffers for performance-critical code.
 
 ```scheme
 let s := "hello 世界"
-s[0]        ; -> "h" (code point)
-s[6]        ; -> "世" (code point)
-(bytes s)   ; -> byte array if you need bytes
+(slice s 0 5)     ; -> "hello" (byte offsets)
+(slice s 6 9)     ; -> "世" (3 bytes)
+(slice s 6 7)     ; -> error: not a character boundary
+(chars s)         ; -> iterator of code points
+(graphemes s)     ; -> iterator of grapheme clusters
+(bytes s)         ; -> byte view, no copy
 ```
 
 **Numeric Types:**
@@ -776,6 +788,8 @@ Rust-style explicit sizing when performance matters:
 - `Complex` - complex numbers
 
 Clear types, no implicit conversions, hardware-close when needed.
+
+**Equality and ordering (Rust's model):** partial and total are separate traits. Floats implement only the partial versions, since IEEE 754's NaN ≠ NaN breaks reflexivity. Anything that needs lawful equality or ordering requires the total trait: set members, map keys, sorting, deduplication. Making partial equality ergonomic, so that floats don't become a constant papercut, is open: #17.
 
 ## Standard Library
 
@@ -936,6 +950,24 @@ Learning from others' mistakes:
 - Default string type must be efficient (UTF-8 byte arrays)
 - Don't sacrifice performance for theoretical elegance
 - Linked lists are fine for algorithms, not for text
+
+**Python: Bytes Are Not Text**
+- An encoded string and raw bytes are different things, and the type system should say so
+- Every encoding/decoding step names its encoding. Nothing depends on the ambient locale
+- (See Strings: Rust's model, no code-point indexing, first-class byte access)
+
+**Haskell: Partial Functions in the Standard Library**
+- `head []` shouldn't explode
+- Functions that can't produce a result for some inputs return `Option`/`Result`
+- (See Error Handling: Absence)
+
+**IEEE 754: NaN Breaks Equality**
+- NaN ≠ NaN makes float equality non-reflexive, which silently breaks sets, maps and sorting
+- Separate partial from total equality/ordering, as Rust does, and make the partial case ergonomic (#17)
+
+**Go: Leaked Goroutines**
+- Unstructured `go` lets tasks outlive their purpose. Errors vanish, leaks pile up
+- Structured concurrency: task lifetimes bounded by scope (#18)
 
 **JavaScript: Standard Library and Naming Consistency**
 - Comprehensive standard library from the start
