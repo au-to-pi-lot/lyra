@@ -536,10 +536,26 @@ The `.method` syntax is sugar for function lookup with type-based dispatch:
 
 Lyra aims for ahead-of-time compilation and eventual self-hosting.
 
-**Compilation Targets:**
-- C code generation (initial target - portable, optimizable by C compiler)
-- LLVM IR (eventual - better optimization, easier debugging)
-- JIT compilation (eventual - for REPL and dynamic code)
+**Compilation Targets: C → LLVM → native**
+
+Performance of both the generated code and the compiler itself is a long-term priority. Backends arrive in this order, each earning its place:
+
+1. **C** (first). Gets a self-hosted compiler working cheaply. The C compiler does optimization and register allocation, and generated C is readable and debuggable (`#line` maps back to Lyra source). It also provides the **bootstrap seed**: the compiler's own C output is committed, so building Lyra from scratch needs only a C compiler, and the C interpreter can retire. (LLVM IR changes between LLVM versions, which makes it a poor long-lived seed.)
+2. **LLVM IR** (when performance work begins). Better code, guaranteed tail calls (`tailcc` + `musttail`), and a route to JIT compilation for the REPL via ORC. Emitted as textual IR and handed to `clang`, rather than linked against LLVM's C++ API.
+3. **Native assembly** (eventually). Owning code generation means owning the stack frame layout. That is what makes Lyra's runtime design fully achievable: precise GC stack maps, growable green-thread stacks that are moved when they grow (Go-style, "millions of threads"), tail calls without workarounds, and fast compiles that LLVM can't offer. SBCL, Chez Scheme and Go all have their own backends for these reasons. Targets: x86-64 (System V and Windows) and ARM64.
+
+**Constraints the C backend must respect,** so it doesn't box in the GC or concurrency plans:
+- **Tail calls**: C guarantees none. Use `musttail` where available (clang, including `clang-cl` on Windows; recent GCC). Fall back to trampolines elsewhere. MSVC has no equivalent.
+- **GC roots**: C can't report where pointers live on its stack, and conservative stack scanning would pin objects and rule out the compacting GC (Stage 2 below). Generated code registers roots in an explicit **shadow stack** instead.
+- **Green threads**: stacks can't be moved without precise stack maps, so the C (and LLVM) backends use fixed-size stacks with guard pages and a small assembly stub for context switches.
+- **Plain, standard C only.** Never post-process the C compiler's output. GHC's via-C backend ended up needing the "evil mangler", a Perl script that rewrote gcc's assembly, and was eventually retired.
+
+**Architecture implications:**
+- **The IR is the real decision, not the target.** Lower to a mid-level IR that makes closures, allocation, GC safepoints and tail calls explicit, so each backend is a comparatively thin pass and adding one doesn't mean rewriting the compiler.
+- **Backends check each other.** With several backends, the same program compiled each way should behave identically. Combined with randomly generated test programs (in the style of Csmith), this is the main defence against miscompiles, and it is the precondition for the native backend.
+- **Keep the LLVM GC integration cheap.** LLVM's own GC stack maps (statepoints) are complex and likely to be superseded by the native backend's stack maps, so the LLVM backend may keep using the shadow stack.
+- **The compiler needs an evaluator anyway.** `defmacro`, `defsyntax` and compile-time evaluation run Lyra code during compilation, so the compiler contains an interpreter (or compiles and loads macros in-process). With the C backend, an interpreter is the natural choice, and it can also serve the REPL until a JIT exists.
+- **Compiler speed is mostly not about the backend.** LLVM is often the slowest single step, but the largest wins come from the front end: compiling modules in parallel, caching per module, and recompiling incrementally. Design for these from the start.
 
 **Self-Hosting Goal:**
 
@@ -550,7 +566,7 @@ Write the Lyra compiler in Lyra itself. Self-hosting is the ultimate test that t
 2. Mark & Sweep GC - memory management
 3. Complete core language - closures, macros, pattern matching
 4. Add Lyra features - syntax sugar, types, modules, traits
-5. Write compiler in Lyra - targets C or LLVM IR
+5. Write compiler in Lyra - targets C first (see Compilation Targets)
 6. Bootstrap - use C interpreter to compile the Lyra compiler
 7. Self-hosted - Lyra compiler compiles itself
 
