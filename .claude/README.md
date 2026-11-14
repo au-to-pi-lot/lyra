@@ -61,7 +61,7 @@ Requirements: Python 3 and an `openssl` binary (Git for Windows ships one). No p
 
 ## Watching for replies
 
-`bin/poll_github.py` prints one line per new human event: comments on issues and PRs, inline review comments, reviews on open PRs, and new issues or PRs. The coordinator runs it as a **background shell command** (not under Monitor):
+`bin/poll_github.py` prints one line per new human event: comments on issues and PRs, inline review comments, reviews on open PRs, new issues or PRs, and merges and closures (merged PRs, PRs closed unmerged, closed issues), which are the cue to pull `main`, clean up worktrees and post the closing Decision comment. The coordinator runs it as a **background shell command** (not under Monitor):
 
 ```
 python .claude/bin/poll_github.py --interval 60 --exit-on-event
