@@ -61,10 +61,12 @@ Requirements: Python 3 and an `openssl` binary (Git for Windows ships one). No p
 
 ## Watching for replies
 
-`bin/poll_github.py` prints one line per new human event: comments on issues and PRs, inline review comments, reviews on open PRs, and new issues or PRs. The coordinator runs it under the Monitor tool:
+`bin/poll_github.py` prints one line per new human event: comments on issues and PRs, inline review comments, reviews on open PRs, and new issues or PRs. The coordinator runs it as a **background shell command** (not under Monitor):
 
 ```
-python .claude/bin/poll_github.py --interval 60
+python .claude/bin/poll_github.py --interval 60 --exit-on-event
 ```
 
-Progress is saved in `poll_state.json` next to `GH_CONFIG_DIR`, so re-arming an expired monitor neither drops nor repeats events.
+It polls silently and exits as soon as it reports something, which wakes the coordinator exactly once. The coordinator handles the events and starts it again. A quiet stretch therefore costs no model tokens at all, so it can run all day while Ysanne is away. (Monitor would also work, but Monitor expires every 30 minutes, and each re-arm is a model turn.) Single failed polls go only to stderr. Five failures in a row produce a `[poller] failing` line and an exit, so a persistent problem still surfaces.
+
+Progress is saved in `poll_state.json` next to `GH_CONFIG_DIR`, so restarts neither drop nor repeat events. The poller runs only while the Claude Code session is open. After a restart it reports everything since its last check.

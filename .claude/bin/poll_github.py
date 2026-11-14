@@ -1,7 +1,9 @@
 """Watch the Lyra repo for human activity the coordinator should react to.
 
-Prints one line per new event, so it can run under Claude Code's Monitor tool
-(each stdout line becomes a notification). Events:
+Prints one line per new event. The coordinator runs it as a background shell
+command with --exit-on-event: it polls silently (costing no model tokens) and
+exits as soon as something happens, which wakes the coordinator once; the
+coordinator handles the events and starts it again. Events:
   - comments on issues and PR conversations
   - inline review comments on PR diffs
   - submitted reviews on open PRs
@@ -9,9 +11,13 @@ Prints one line per new event, so it can run under Claude Code's Monitor tool
 
 Anything authored by a bot account (including our own App) is ignored.
 
-Progress is kept in a state file, so a monitor that expires and is re-armed
-picks up exactly where the last one stopped. On the very first run there's no
-state, and it starts from "now" rather than replaying history.
+Progress is kept in a state file, so each restart picks up exactly where the
+last run stopped. On the very first run there's no state, and it starts from
+"now" rather than replaying history.
+
+Single failed polls (network blips) are only logged to stderr. After
+FAILURE_LIMIT failures in a row it prints one "[poller] failing" line, and in
+--exit-on-event mode exits, so a persistent problem doesn't go unnoticed.
 
 Before each poll it runs bot_token.py, because a long-running poller makes no
 tool calls of its own and would otherwise outlive the hourly App token.
@@ -21,7 +27,7 @@ Configuration from the environment:
   LYRA_REPO         owner/repo to watch (default: au-to-pi-lot/lyra)
   LYRA_POLL_STATE   state file path (default: poll_state.json next to GH_CONFIG_DIR)
 
-Usage: poll_github.py [--interval SECONDS] [--once]
+Usage: poll_github.py [--interval SECONDS] [--once | --exit-on-event]
 """
 
 import argparse
@@ -36,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OVERLAP = timedelta(seconds=30)  # re-query a little history; `seen` dedupes it
 SEEN_LIMIT = 2000
 SNIPPET = 160
+FAILURE_LIMIT = 5
 
 
 def utcnow():
@@ -131,12 +138,14 @@ def save_state(path, checked_at, seen):
 
 
 def poll_once(repo, state_path):
+    """Print any new events and return how many there were."""
     checked_at, seen = load_state(state_path)
     started = utcnow()
     if checked_at is None:
         save_state(state_path, started, [])
-        print(f"[poller] first run; watching {repo} from {fmt_ts(started)}", flush=True)
-        return
+        print(f"[poller] first run; watching {repo} from {fmt_ts(started)}",
+              file=sys.stderr, flush=True)
+        return 0
 
     subprocess.run([sys.executable, os.path.join(HERE, "bot_token.py")], check=True)
     seen_set = set(seen)
@@ -148,12 +157,16 @@ def poll_once(repo, state_path):
         print(line, flush=True)
         seen.append(key)
     save_state(state_path, started, seen)
+    return len(events)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--interval", type=int, default=60)
-    ap.add_argument("--once", action="store_true")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="poll once and exit")
+    mode.add_argument("--exit-on-event", action="store_true",
+                      help="poll until something is reported, then exit")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252
 
@@ -161,12 +174,19 @@ def main():
     state_path = os.environ.get("LYRA_POLL_STATE") or os.path.join(
         os.path.dirname(os.environ["GH_CONFIG_DIR"].rstrip("\\/")), "poll_state.json")
 
+    failures = 0
     while True:
         try:
-            poll_once(repo, state_path)
-        except Exception as e:  # one failed poll shouldn't kill the monitor
+            reported = poll_once(repo, state_path)
+            failures = 0
+        except Exception as e:  # one failed poll shouldn't end the watch
             print(f"poll_github: {e}", file=sys.stderr, flush=True)
-        if args.once:
+            failures += 1
+            reported = 0
+            if failures == FAILURE_LIMIT:
+                print(f"[poller] failing: {failures} polls in a row, last error: {e}", flush=True)
+                reported = 1
+        if args.once or (args.exit_on_event and reported):
             return
         time.sleep(args.interval)
 
