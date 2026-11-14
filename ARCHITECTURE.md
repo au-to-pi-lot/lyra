@@ -39,6 +39,18 @@ CFLAGS = -Wall -Wextra -std=c11 -g -DDEBUG_MACRO -DDEBUG_QUASIQUOTE
 - `replxx::replxx`'s exported target links `Threads::Threads`, so `find_package(Threads REQUIRED)` must run before `find_package(replxx CONFIG REQUIRED)`.
 - Verified working: `cmake -S . -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Debug` - all 90 tests pass via `ctest`, and the CLI/REPL/module-import/match all work correctly.
 
+### Continuous integration
+`.github/workflows/ci.yml` runs on every pull request, on pushes to `main`, and on manual dispatch. One matrix job per build path, `fail-fast: false` so one platform's failure doesn't hide another's:
+- **Linux (CMake)**: `ubuntu-latest`, `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug`, build, `ctest`.
+- **Linux (Makefile)**: `ubuntu-latest`, `make install && make && make test`, i.e. exactly the README's Linux path.
+- **Windows (CMake, MSVC)**: `windows-latest`, `cmake -S . -B build -A x64`. No `-G` is given, so CMake picks the newest Visual Studio on the runner and the workflow keeps working when the runner image moves to a newer VS.
+
+Checkout uses `submodules: recursive` so `external/vcpkg` is populated. vcpkg builds every dependency from source, so the workflow sets `VCPKG_BINARY_SOURCES=clear;files,<workspace>/.vcpkg-binary-cache,readwrite` and persists that directory with `actions/cache`. The key is OS + vcpkg submodule commit + `hashFiles('vcpkg.json')`, with prefix restore-keys, so a dependency change still restores the packages that didn't change. Both Linux jobs share one cache (they produce identical `x64-linux` packages). The first job to finish on a new key saves it; the other job on that OS just misses the save.
+
+**replxx is C++.** vcpkg builds it as a static library, and its exported CMake target doesn't declare the C++ standard library, so a C-only link of `lyra` on Linux fails with undefined `operator new`/`std::basic_string` references. MSVC links its C++ runtime automatically, which is why this only showed up once Linux was built. The fixes:
+- `CMakeLists.txt` enables `CXX` in `project()` and sets `LINKER_LANGUAGE CXX` on the `lyra` executable, so CMake links it with the C++ driver. All sources are still C; test binaries don't touch replxx and stay C-linked.
+- The Makefile links `lyra` against `-lreplxx -lstdc++ -pthread -lm` (it used to say `-ledit -lncurses`, left over from before the switch to replxx) and the tests against `-lcheck -pthread -lm`.
+
 ### Building in a git worktree
 Implementer subagents work in git worktrees (under `.claude/worktrees/`), and `git worktree add` doesn't check out submodules, so `external/vcpkg/` is empty there. `CMakeLists.txt` defaults `CMAKE_TOOLCHAIN_FILE` to that path, so configuring fails. Point it at the main checkout's vcpkg instead:
 ```bash
