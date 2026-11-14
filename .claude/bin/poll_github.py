@@ -8,6 +8,7 @@ coordinator handles the events and starts it again. Events:
   - inline review comments on PR diffs
   - submitted reviews on open PRs
   - newly opened issues and PRs
+  - merged PRs, PRs closed without merging, and closed issues
 
 Anything authored by a bot account (including our own App) is ignored.
 
@@ -102,13 +103,24 @@ def collect(repo, since):
                f"[#{n} review comment{edited} on {c.get('path')}] {c['user']['login']}: "
                f"{snippet(c['body'])} {c['html_url']}")
 
-    # `since` on this endpoint filters by updated_at; only report genuinely new ones.
+    # `since` on this endpoint filters by updated_at, so check what actually changed.
     for i in gh_api(f"repos/{repo}/issues?state=all&since={s}&sort=updated&per_page=100"):
-        if not is_human(i) or parse_ts(i["created_at"]) < since:
-            continue
         kind = "PR" if "pull_request" in i else "issue"
-        yield (f"new:{i['id']}", i["created_at"],
-               f"[#{i['number']} new {kind}] {i['user']['login']}: {i['title']} {i['html_url']}")
+        if is_human(i) and parse_ts(i["created_at"]) >= since:
+            yield (f"new:{i['id']}", i["created_at"],
+                   f"[#{i['number']} new {kind}] {i['user']['login']}: {i['title']} {i['html_url']}")
+
+        if i.get("closed_at") and parse_ts(i["closed_at"]) >= since:
+            # The list endpoint doesn't say who closed it; one extra call per closure.
+            closer = gh_api(f"repos/{repo}/issues/{i['number']}").get("closed_by") or {}
+            if closer.get("type") == "Bot":
+                continue
+            merged = (i.get("pull_request") or {}).get("merged_at")
+            what = "merged" if merged else ("closed unmerged" if kind == "PR" else "closed")
+            reason = f" ({i['state_reason']})" if kind == "issue" and i.get("state_reason") else ""
+            yield (f"closed:{i['id']}:{i['closed_at']}", i["closed_at"],
+                   f"[#{i['number']} {kind} {what}{reason}] by {closer.get('login', '?')}: "
+                   f"{i['title']} {i['html_url']}")
 
     # Reviews have no repo-wide endpoint, so check each open PR.
     for pr in gh_api(f"repos/{repo}/pulls?state=open&per_page=100"):
