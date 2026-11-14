@@ -556,7 +556,7 @@ Value *intrinsic_gensym(GC *gc, Closure *closure, Value *args) {
 
 // (unique), (unique 'name) or (unique "name"): a fresh uninterned symbol,
 // equal only to itself. The optional name is only for printing; without one
-// the print name is "unique". Impure: each call yields a new identity.
+// the print name is "unique".
 Value *intrinsic_unique(GC *gc, Closure *closure, Value *args) {
     (void)closure;
     int argc = list_length(args);
@@ -576,9 +576,7 @@ Value *intrinsic_unique(GC *gc, Closure *closure, Value *args) {
 
 // (expand-macro-1 form) / (expand-macro form): expand without evaluating.
 // The macro head is resolved in the caller's closure. Non-macro forms,
-// including special forms, come back unchanged. Impure: expanding runs the
-// macro's body, which may do anything (e.g. gensym). Strictly, purity depends
-// on the macro being expanded; we conservatively call it impure.
+// including special forms, come back unchanged.
 Value *intrinsic_expand_macro_1(GC *gc, Closure *closure, Value *args) {
     if (list_length(args) != 1) {
         lyra_panic("expand-macro-1 requires exactly one argument (a quoted form)");
@@ -856,23 +854,6 @@ Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args) {
         return NIL;
     }
     return value;
-}
-
-Value *intrinsic_pure_p(GC *gc, Closure *closure, Value *args) {
-    (void)gc;
-    (void)closure;
-    // (pure? fn)
-    if (list_length(args) < 1) {
-        lyra_panic("is-pure requires a function argument");
-    }
-
-    Value *fn = list_index(args, 0);
-    if (fn->type != FUNCTION && fn->type != MACRO) {
-        lyra_panic("is-pure requires a function or macro argument");
-    }
-
-    Callable *callable = (fn->type == FUNCTION) ? fn->data.as_function : fn->data.as_macro;
-    return callable->is_pure ? TRUE : FALSE;
 }
 
 Value *intrinsic_begin(GC *gc, Closure *closure, Value *args) {

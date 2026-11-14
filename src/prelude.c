@@ -24,11 +24,6 @@ void define_intrinsic_function(GC *gc, Closure *closure, char *key, Intrinsic in
     define_intrinsic_value(gc, closure, key, value);
 }
 
-void define_intrinsic_function_pure(GC *gc, Closure *closure, char *key, Intrinsic intrinsic_function, bool is_pure) {
-    Value *value = make_intrinsic_function_with_purity(gc, intrinsic_function, is_pure);
-    define_intrinsic_value(gc, closure, key, value);
-}
-
 void prelude(GC *gc, Closure *closure) {
     define_intrinsic_value(gc, closure, "true", TRUE);
     define_intrinsic_value(gc, closure, "false", FALSE);
@@ -47,66 +42,62 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_macro(gc, closure, "or", &intrinsic_or);
     define_intrinsic_macro(gc, closure, "not", &intrinsic_not);
 
-    // Pure arithmetic functions
-    define_intrinsic_function_pure(gc, closure, "+", &intrinsic_add, true);
-    define_intrinsic_function_pure(gc, closure, "-", &intrinsic_sub, true);
-    define_intrinsic_function_pure(gc, closure, "*", &intrinsic_mul, true);
-    define_intrinsic_function_pure(gc, closure, "/", &intrinsic_div, true);
-    define_intrinsic_function_pure(gc, closure, "divmod", &intrinsic_divmod, true);
+    // Arithmetic functions
+    define_intrinsic_function(gc, closure, "+", &intrinsic_add);
+    define_intrinsic_function(gc, closure, "-", &intrinsic_sub);
+    define_intrinsic_function(gc, closure, "*", &intrinsic_mul);
+    define_intrinsic_function(gc, closure, "/", &intrinsic_div);
+    define_intrinsic_function(gc, closure, "divmod", &intrinsic_divmod);
 
     // Comparison operators
-    define_intrinsic_function_pure(gc, closure, "=", &intrinsic_eq, true);
-    define_intrinsic_function_pure(gc, closure, "<", &intrinsic_lt, true);
-    define_intrinsic_function_pure(gc, closure, "<=", &intrinsic_lt_eq, true);
-    define_intrinsic_function_pure(gc, closure, ">", &intrinsic_gt, true);
-    define_intrinsic_function_pure(gc, closure, ">=", &intrinsic_gt_eq, true);
+    define_intrinsic_function(gc, closure, "=", &intrinsic_eq);
+    define_intrinsic_function(gc, closure, "<", &intrinsic_lt);
+    define_intrinsic_function(gc, closure, "<=", &intrinsic_lt_eq);
+    define_intrinsic_function(gc, closure, ">", &intrinsic_gt);
+    define_intrinsic_function(gc, closure, ">=", &intrinsic_gt_eq);
 
-    // Pure list functions
-    define_intrinsic_function_pure(gc, closure, "car", &intrinsic_car, true);
-    define_intrinsic_function_pure(gc, closure, "cdr", &intrinsic_cdr, true);
-    define_intrinsic_function_pure(gc, closure, "cons", &intrinsic_cons, true);
+    // List functions
+    define_intrinsic_function(gc, closure, "car", &intrinsic_car);
+    define_intrinsic_function(gc, closure, "cdr", &intrinsic_cdr);
+    define_intrinsic_function(gc, closure, "cons", &intrinsic_cons);
 
-    // Purity-polymorphic (depends on function argument) - mark as impure conservatively
-    define_intrinsic_function_pure(gc, closure, "apply", &intrinsic_apply, false);
+    define_intrinsic_function(gc, closure, "apply", &intrinsic_apply);
 
-    // Impure functions (side effects)
-    define_intrinsic_function_pure(gc, closure, "gensym", &intrinsic_gensym, false);  // Fresh identity each call
-    define_intrinsic_function_pure(gc, closure, "unique", &intrinsic_unique, false);  // Fresh identity each call
-    // Runs the macro body, so purity depends on the macro; conservatively impure
-    define_intrinsic_function_pure(gc, closure, "expand-macro-1", &intrinsic_expand_macro_1, false);
-    define_intrinsic_function_pure(gc, closure, "expand-macro", &intrinsic_expand_macro, false);
-    define_intrinsic_function_pure(gc, closure, "load-file", &intrinsic_load_file, false);  // File I/O
-    define_intrinsic_function_pure(gc, closure, "eval-string", &intrinsic_eval_string, false);  // Dynamic evaluation
-    define_intrinsic_function_pure(gc, closure, "print", &intrinsic_print, false);  // Writes to stdout, with newline
-    define_intrinsic_function_pure(gc, closure, "write", &intrinsic_write, false);  // Writes to stdout, no newline
-    define_intrinsic_function_pure(gc, closure, "panic", &intrinsic_panic, false);  // Aborts evaluation
-    define_intrinsic_function_pure(gc, closure, "panic-with-status", &intrinsic_panic_with_status, false);
-    define_intrinsic_function_pure(gc, closure, "get-var", &intrinsic_get_var, true);  // Just reads
-    define_intrinsic_function_pure(gc, closure, "is-pure", &intrinsic_pure_p, true);  // Purity query
+    define_intrinsic_function(gc, closure, "gensym", &intrinsic_gensym);  // Fresh identity each call
+    define_intrinsic_function(gc, closure, "unique", &intrinsic_unique);  // Fresh identity each call
+    define_intrinsic_function(gc, closure, "expand-macro-1", &intrinsic_expand_macro_1);
+    define_intrinsic_function(gc, closure, "expand-macro", &intrinsic_expand_macro);
+    define_intrinsic_function(gc, closure, "load-file", &intrinsic_load_file);  // File I/O
+    define_intrinsic_function(gc, closure, "eval-string", &intrinsic_eval_string);  // Dynamic evaluation
+    define_intrinsic_function(gc, closure, "print", &intrinsic_print);  // Writes to stdout, with newline
+    define_intrinsic_function(gc, closure, "write", &intrinsic_write);  // Writes to stdout, no newline
+    define_intrinsic_function(gc, closure, "panic", &intrinsic_panic);  // Aborts evaluation
+    define_intrinsic_function(gc, closure, "panic-with-status", &intrinsic_panic_with_status);
+    define_intrinsic_function(gc, closure, "get-var", &intrinsic_get_var);  // Just reads
 
-    // Type predicates (all pure)
-    define_intrinsic_function_pure(gc, closure, "is-cons", &intrinsic_is_cons, true);
-    define_intrinsic_function_pure(gc, closure, "is-int", &intrinsic_is_int, true);
-    define_intrinsic_function_pure(gc, closure, "is-float", &intrinsic_is_float, true);
-    define_intrinsic_function_pure(gc, closure, "is-boolean", &intrinsic_is_boolean, true);
-    define_intrinsic_function_pure(gc, closure, "is-string", &intrinsic_is_string, true);
-    define_intrinsic_function_pure(gc, closure, "is-symbol", &intrinsic_is_symbol, true);
-    define_intrinsic_function_pure(gc, closure, "is-function", &intrinsic_is_function, true);
-    define_intrinsic_function_pure(gc, closure, "is-macro", &intrinsic_is_macro, true);
-    define_intrinsic_function_pure(gc, closure, "is-nil", &intrinsic_is_nil, true);
+    // Type predicates
+    define_intrinsic_function(gc, closure, "is-cons", &intrinsic_is_cons);
+    define_intrinsic_function(gc, closure, "is-int", &intrinsic_is_int);
+    define_intrinsic_function(gc, closure, "is-float", &intrinsic_is_float);
+    define_intrinsic_function(gc, closure, "is-boolean", &intrinsic_is_boolean);
+    define_intrinsic_function(gc, closure, "is-string", &intrinsic_is_string);
+    define_intrinsic_function(gc, closure, "is-symbol", &intrinsic_is_symbol);
+    define_intrinsic_function(gc, closure, "is-function", &intrinsic_is_function);
+    define_intrinsic_function(gc, closure, "is-macro", &intrinsic_is_macro);
+    define_intrinsic_function(gc, closure, "is-nil", &intrinsic_is_nil);
 
     // Type constructors
-    define_intrinsic_function_pure(gc, closure, "int", &intrinsic_int, true);
-    define_intrinsic_function_pure(gc, closure, "truncate", &intrinsic_truncate, true);
-    define_intrinsic_function_pure(gc, closure, "floor", &intrinsic_floor, true);
-    define_intrinsic_function_pure(gc, closure, "ceiling", &intrinsic_ceiling, true);
-    define_intrinsic_function_pure(gc, closure, "round", &intrinsic_round, true);
-    define_intrinsic_function_pure(gc, closure, "float", &intrinsic_float, true);
-    define_intrinsic_function_pure(gc, closure, "string", &intrinsic_string, true);
-    define_intrinsic_function_pure(gc, closure, "symbol", &intrinsic_symbol, true);
+    define_intrinsic_function(gc, closure, "int", &intrinsic_int);
+    define_intrinsic_function(gc, closure, "truncate", &intrinsic_truncate);
+    define_intrinsic_function(gc, closure, "floor", &intrinsic_floor);
+    define_intrinsic_function(gc, closure, "ceiling", &intrinsic_ceiling);
+    define_intrinsic_function(gc, closure, "round", &intrinsic_round);
+    define_intrinsic_function(gc, closure, "float", &intrinsic_float);
+    define_intrinsic_function(gc, closure, "string", &intrinsic_string);
+    define_intrinsic_function(gc, closure, "symbol", &intrinsic_symbol);
 
     // Directory operations
-    define_intrinsic_function_pure(gc, closure, "list-directory", &intrinsic_list_directory, false);
+    define_intrinsic_function(gc, closure, "list-directory", &intrinsic_list_directory);
 
     // Initialize module registry
     eval(gc, closure, "(define *module-exports* nil)");

@@ -67,9 +67,6 @@ Value *intrinsic_panic_with_status(GC *gc, Closure *closure, Value *args);
 // Variable access
 Value *intrinsic_get_var(GC *gc, Closure *closure, Value *args);
 
-// Purity checking
-Value *intrinsic_pure_p(GC *gc, Closure *closure, Value *args);
-
 // Sequencing
 Value *intrinsic_begin(GC *gc, Closure *closure, Value *args);
 

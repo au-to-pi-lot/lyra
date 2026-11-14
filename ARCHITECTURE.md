@@ -103,18 +103,6 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
   - Printing: an uninterned symbol prints as `#:name`. The reader can't read that back as the same symbol. `(string s)` returns just the name (`"name"`), and `(symbol (string s))` gives back the *interned* symbol: round-tripping through text always loses identity.
 - Callables can be intrinsic (C functions) or derived (user-defined Lisp functions/macros)
 
-## Purity Tracking
-- **Design**: Functions track whether they have side effects via `is_pure` flag in `Callable` struct
-  - Pure functions: can be memoized, reordered, constant-folded by compiler
-  - Impure functions: have side effects (I/O, mutation, etc.)
-- **Intrinsics declare purity**: Arithmetic/list operations are pure, I/O operations are impure
-- **Purity is viral**: If a derived function calls any impure function, it becomes impure (future work)
-- **Query at runtime**: `(is-pure fn)` returns true/false
-- **Use case**: Compiler can use this for optimizations (memoization, dead code elimination, etc.)
-
-**Pure intrinsics**: `+`, `-`, `*`, `/`, `divmod`, `int`, `truncate`, `floor`, `ceiling`, `round`, `float`, `=`, `car`, `cdr`, `cons`, `get-var`, `is-pure`, `string`, `symbol`
-**Impure intrinsics**: `panic`/`panic-with-status` (abort evaluation), `gensym` (mutates counter), `load-file` (file I/O), `eval-string` (dynamic eval), `print`/`write` (stdout), `expand-macro`/`expand-macro-1` (run macro bodies), `apply` (purity-polymorphic, conservatively impure)
-
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
   - Fixed GC bugs that were incorrectly freeing live values in closures
@@ -188,7 +176,7 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - `(symbol "foo")` → `'foo` (string to symbol)
   - `(symbol 'foo)` → `'foo` (identity)
 
-**Type Predicates** (all pure):
+**Type Predicates**:
 - `is-cons` - Check if value is a cons cell/list: `(is-cons '(1 2 3))` → `true`
 - `is-int` - Check if value is an integer: `(is-int 42)` → `true`
 - `is-float` - Check if value is a float: `(is-float 3.14)` → `true`
@@ -210,20 +198,18 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - Match one held in a variable with a value pattern: `(match e (,file-not-found ...) ...)`. Writing `'file-not-found` in a pattern gives the interned symbol, which won't match
 - `get-var` - Get value of variable by symbol: `(get-var 'x)` → value of x
   - Used internally by module system
-- `is-pure` - Check if function is pure: `(is-pure +)` → `true`
 - `expand-macro-1` - Expand a quoted form **one step** without evaluating it: `(expand-macro-1 '(let ((x 1)) x))` → `((lambda (x) x) 1)`
 - `expand-macro` - Expand repeatedly **at the head** until the head is no longer a macro (subforms are not expanded): `(expand-macro '(fn id (x) x))` → `(define id (Z (lambda (id) (lambda (x) x))))`
   - Both are ordinary functions, so the form must be quoted (it may also be computed); the head is resolved in the caller's scope, but the macro body runs in its definition-site scope
   - Only derived (user/prelude) macros expand. Special forms (`if`, `lambda`, `define`, ...), function calls, unbound heads and atoms come back unchanged
   - No `expand-macro-all`: a tree walker (e.g. a compiler written in Lyra) is expected to call these itself
-  - Impure: expansion runs the macro body (which may call `gensym`, etc.). Strictly, purity depends on the macro being expanded
 
-**File I/O** (impure):
+**File I/O**:
 - `load-file` - Read file contents as string: `(load-file "module.lyra")` → file contents as a string
 - `eval-string` - Evaluate string as code: `(eval-string "(+ 1 2)")` → `3`
   - Evaluates in **current closure** - definitions affect caller's scope
 
-**Output** (impure):
+**Output**:
 - `print` - Write strings to stdout followed by a newline: `(print "a" "b")` writes `ab` + newline, returns `nil`
   - Any number of arguments, all of which must be strings (no implicit conversion); otherwise panics (`print requires string arguments`) before writing anything. `(print)` emits just a newline
 - `write` - Same as `print` but with no trailing newline: `(write "a" "b")` writes `ab`
@@ -231,7 +217,7 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - Named `write` so a later task can add a file-handle first argument
   - Output goes to `stdout` unless redirected with `intrinsic_set_print_stream(FILE*)` (test hook)
 
-**Errors** (impure):
+**Errors**:
 - `panic` - Abort evaluation with a message: `(panic "bad value: " (string x))`
   - Same argument rules as `print`: any number of strings, concatenated with no separator; a non-string argument is itself a panic (`panic requires string arguments`). `(panic)` has an empty message
   - Not catchable from Lyra code; see the Panics section
@@ -401,7 +387,6 @@ The Lyra interpreter supports multiple modes:
 **Examples**:
 ```bash
 ./lyra -c '(+ 1 2 3)'                                # → 6
-./lyra -c '(is-pure +)'                              # → true
 ./lyra -c '(import math (square)) (square 7)'        # → 49
 ./lyra -c '(define x 10) (define y 20) (+ x y)'      # → 30
 ```
@@ -489,7 +474,7 @@ The Lyra interpreter supports multiple modes:
     - Empty list, first-match-wins semantics
     - Realistic compiler example (`compile-expr`)
 
-**Note**: Module system and purity tracking are tested manually via CLI but not yet in the test suites.
+**Note**: The module system is tested manually via CLI but not yet in the test suites.
 
 ## Known Issues & TODOs
 - **Macro hygiene**: ✅ **Solved!** - Use `gensym` to generate unique symbols in macros

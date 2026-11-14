@@ -33,9 +33,6 @@ Everything reachable from a `Value*` is GC-managed (`src/gc.c`) — never call `
 ### Macro hygiene
 Any symbol written literally inside a `quasiquote` template that isn't supplied by the macro's caller needs `gensym`, or it risks capturing/colliding with the caller's own variables. Symbols used only during macro *expansion* (before the template) are safe as-is.
 
-### Purity tracking is viral, and honesty matters
-When adding an intrinsic, set `is_pure` truthfully — pure must mean *genuinely* no side effects, always. A derived function that calls even one impure function should itself be treated as impure. Future compiler optimizations (memoization, reordering, dead-code elimination) will trust this flag, so don't mark something pure to make a test pass.
-
 ### Cross-platform code (Windows/MSVC)
 `windows.h` typedefs `INT`, `FLOAT`, and `BOOLEAN` — the exact same identifiers as `ValueType` enum constants in `src/types/value.h`. Never let `windows.h` and `value.h` end up in the same translation unit; MSVC will fail with a wall of redefinition errors. If you need a Win32 API, isolate it behind a small platform-neutral header — see `src/platform_dir.h`/`.c` for the pattern (hides `FindFirstFile` vs `opendir` behind a plain `char **` API).
 
