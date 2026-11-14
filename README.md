@@ -47,3 +47,7 @@ ctest --test-dir build -C Debug --output-on-failure   # run the test suite
 ```
 
 CMake also works on Linux/macOS (`-G "Unix Makefiles"` or `Ninja`) if you'd rather not use the Makefile.
+
+### Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) builds Lyra and runs the full test suite on every pull request and every push to `main`, on Linux (both CMake and the Makefile) and on Windows (CMake + MSVC). See [ARCHITECTURE.md](ARCHITECTURE.md#continuous-integration) for details.

@@ -28,7 +28,7 @@ LIB_OBJS = $(filter-out $(BUILD_DIR)/main.o, $(OBJS))
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $@ $(LDFLAGS) -ledit -lncurses
+	$(CC) $(OBJS) -o $@ $(LDFLAGS) -lreplxx -lstdc++ -pthread -lm
 	$(STRIP) $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
@@ -47,7 +47,7 @@ test: $(TEST_BINS)
 	done
 
 $(BUILD_DIR)/test_%: $(TEST_DIR)/test_%.c $(LIB_OBJS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS) -lcheck -lm
+	$(CC) $(CFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS) -lcheck -pthread -lm
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)

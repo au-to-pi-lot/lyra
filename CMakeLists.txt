@@ -13,7 +13,9 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
         CACHE STRING "Vcpkg toolchain file")
 endif()
 
-project(lyra C)
+# CXX is enabled only so the lyra executable can be linked by the C++ driver
+# (see LINKER_LANGUAGE below); every Lyra source file is still C.
+project(lyra C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -40,6 +42,10 @@ target_include_directories(lyra_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src" ${
 
 add_executable(lyra src/main.c)
 target_link_libraries(lyra PRIVATE lyra_core replxx::replxx)
+# replxx is a C++ library and vcpkg builds it static, but its exported target
+# doesn't declare a dependency on the C++ standard library. Linking with the
+# C++ driver pulls that in (libstdc++/libc++ on Linux/macOS; a no-op on MSVC).
+set_target_properties(lyra PROPERTIES LINKER_LANGUAGE CXX)
 
 if(NOT WIN32)
     target_link_libraries(lyra_core PUBLIC m)
