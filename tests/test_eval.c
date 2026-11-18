@@ -2220,6 +2220,9 @@ START_TEST(test_loud_arithmetic)
     ck_assert_panics(&gc, closure, "(/ 1 0)", "division by zero");
     ck_assert_panics(&gc, closure, "(/ 1.0 0.0)", "division by zero");
     ck_assert_panics(&gc, closure, "(divmod 7 0)", "division by zero");
+    // INT_MIN / -1 wraps: quotient INT_MIN, remainder 0
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod (- 0 2147483647 1) -1)"), "(-2147483648 0)");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(divmod 7 -1)"), "(-7 0)");
 
     // divmod arity and types
     ck_assert_panics(&gc, closure, "(divmod 1)", "divmod expects exactly 2 arguments, but got 1");
@@ -2268,7 +2271,12 @@ START_TEST(test_no_implicit_promotion)
     ck_assert_str_eq(eval_repr(&gc, closure, "(- -3)"), "3");
     ck_assert_str_eq(eval_repr(&gc, closure, "(- 0)"), "0");
     ck_assert_panics(&gc, closure, "(-)", "- expects at least 1 argument, but got 0");
-    ck_assert_panics(&gc, closure, "(- (- 0 2147483647 1))", "integer overflow in -");
+    // Int arithmetic wraps in two's complement
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- (- 0 2147483647 1))"), "-2147483648");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 2147483647 1)"), "-2147483648");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- (- 0 2147483647 1) 1)"), "2147483647");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(* 2147483647 2)"), "-2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(* (- 0 2147483647 1) -1)"), "-2147483648");
     ck_assert_str_eq(eval_repr(&gc, closure, "(* 2.5 2.0)"), "5.0");
 
     // Explicit conversion makes mixed arithmetic expressible
