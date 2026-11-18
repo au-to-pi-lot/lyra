@@ -31,10 +31,10 @@ Lyra is a high-performance, garbage-collected, functional-first programming lang
 - Splat syntax (`*args`, `**kwargs`)
 - F-string interpolation
 - `range()` and other standard library naming
+- `dict` (dictionary) as the name for the everyday hash map
 - **Not**: Module system (execution-based imports cause circular dependency issues)
 
 ### Ruby
-- Naming conventions: `hash` over `dict`
 - Object model influences
 
 ### Rust
@@ -287,12 +287,15 @@ match lst:
   [] -> base
   [x & xs] -> recur(x, xs)  # O(1) head/tail for recursion
 
-# {} - Sets and maps (distinguished by : syntax)
+# {} - Sets and dicts (inline syntax is provisional and open: #32)
 {1, 2, 3}           # Set (homogeneous elements)
-{a: 1, b: 2}        # Map (key-value pairs with :)
+{a: 1, b: 2}        # Dict (key-value pairs with :)
 {a: 1, 2}           # Syntax error (can't mix)
-                    # Iteration order of {} is not guaranteed (hash seeding
-                    # against flooding, speed); ordered maps are separate. #31
+(set 1 2 3)         # S-expression forms
+(dict ("a" 1) ("b" 2))
+                    # Keys and set members need total equality: no floats (#17).
+                    # Iteration order is not guaranteed (hash seeding against
+                    # flooding, speed); ordered dicts are separate. #31
 
 # Explicit constructors
 (vector 1 2 3)      # Vector - random access, O(1) indexing
@@ -812,7 +815,7 @@ Clear types, no implicit conversions, hardware-close when needed.
 **Philosophy: Batteries Included (Python-inspired)**
 
 Core functionality should be in stdlib, not external packages:
-- **Collections**: vectors, hash maps, sets, queues, etc.
+- **Collections**: vectors, dicts, sets, queues, etc.
 - **I/O**: files, streams, buffering
 - **Networking**: TCP, UDP, HTTP client
 - **Datetime**: parsing, formatting, timezones
