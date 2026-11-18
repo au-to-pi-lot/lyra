@@ -291,6 +291,8 @@ match lst:
 {1, 2, 3}           # Set (homogeneous elements)
 {a: 1, b: 2}        # Map (key-value pairs with :)
 {a: 1, 2}           # Syntax error (can't mix)
+                    # Iteration order of {} is not guaranteed (hash seeding
+                    # against flooding, speed); ordered maps are separate. #31
 
 # Explicit constructors
 (vector 1 2 3)      # Vector - random access, O(1) indexing
