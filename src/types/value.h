@@ -45,13 +45,13 @@ typedef enum GCObjectType {
     GC_CHAMP_NODE  // a dict/set trie node (types/champ.h)
 } GCObjectType;
 
-// GC-managed object header
+// GC object header. Lives immediately before the object it describes (one
+// malloc block), so an object's header is `(GCObject *)object - 1`.
 typedef struct GCObject {
     struct GCObject *next;
     bool marked;
     size_t size;
     GCObjectType type;
-    void *data;  // pointer to the actual Value/Cons/Closure/etc
 } GCObject;
 
 // GC state

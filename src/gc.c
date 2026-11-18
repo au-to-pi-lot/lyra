@@ -3,6 +3,8 @@
 #include <string.h>
 #include "types/list.h"
 #include "types/champ.h"
+#include "types/boolean.h"
+#include "intrinsics.h"
 
 #define GC_INITIAL_THRESHOLD 1000
 
@@ -18,98 +20,88 @@ void gc_init(GC *gc) {
     gc->uninterned_counter = 0;
 }
 
-// Internal helper: register an object with the GC
-GCObject *gc_register(GC *gc, void *data, size_t size, GCObjectType type) {
-    GCObject *obj = malloc(sizeof(GCObject));
+// Every GC object is one malloc block: a GCObject header immediately followed
+// by the object itself, so the header of object `p` is `(GCObject *)p - 1`.
+static GCObject *header_of(void *p) {
+    return (GCObject *)p - 1;
+}
+
+// Allocate `size` bytes of GC object, registered under `type`. Returns the
+// object, which starts right after its header.
+static void *gc_alloc_block(GC *gc, size_t size, GCObjectType type) {
+    GCObject *obj = malloc(sizeof(GCObject) + size);
     obj->next = gc->head;
     obj->marked = false;
     obj->size = size;
     obj->type = type;
-    obj->data = data;
     gc->head = obj;
     gc->num_objects++;
-    return obj;
+    return obj + 1;
 }
 
 // Allocate a new Value through the GC
 Value *gc_alloc_value(GC *gc, ValueType type, ValueData data) {
-    Value *value = malloc(sizeof(Value));
+    Value *value = gc_alloc_block(gc, sizeof(Value), GC_VALUE);
     value->type = type;
     value->data = data;
-    gc_register(gc, value, sizeof(Value), GC_VALUE);
     return value;
 }
 
 Cons *gc_alloc_cons(GC *gc) {
-    Cons *cons = malloc(sizeof(Cons));
+    Cons *cons = gc_alloc_block(gc, sizeof(Cons), GC_CONS);
     // Start as (nil . nil) so a cons whose car is still being computed when
     // a panic unwinds never holds garbage pointers.
     cons->car = NIL;
     cons->cdr = NIL;
-    gc_register(gc, cons, sizeof(Cons), GC_CONS);
     return cons;
 }
 
 Closure *gc_alloc_closure(GC *gc) {
-    Closure *closure = malloc(sizeof(Closure));
+    Closure *closure = gc_alloc_block(gc, sizeof(Closure), GC_CLOSURE);
     closure->defs = NULL;
     closure->parent = NULL;
-    gc_register(gc, closure, sizeof(Closure), GC_CLOSURE);
     return closure;
 }
 
 Callable *gc_alloc_callable(GC *gc) {
-    Callable *callable = malloc(sizeof(Callable));
-    gc_register(gc, callable, sizeof(Callable), GC_CALLABLE);
-    return callable;
+    return gc_alloc_block(gc, sizeof(Callable), GC_CALLABLE);
 }
 
 Variable *gc_alloc_variable(GC *gc) {
-    Variable *var = malloc(sizeof(Variable));
-    gc_register(gc, var, sizeof(Variable), GC_VARIABLE);
-    return var;
+    return gc_alloc_block(gc, sizeof(Variable), GC_VARIABLE);
 }
 
 UT_string *gc_alloc_string(GC *gc) {
-    UT_string *str = NULL;
-    utstring_new(str);
-    gc_register(gc, str, sizeof(UT_string), GC_UTSTRING);
+    // Not utstring_new: that mallocs the UT_string itself. Initialize it in
+    // place instead; sweep releases its buffer with utstring_done.
+    UT_string *str = gc_alloc_block(gc, sizeof(UT_string), GC_UTSTRING);
+    utstring_init(str);
     return str;
 }
 
 ChampNode *gc_alloc_champ_node(GC *gc, size_t nslots) {
-    size_t size = sizeof(ChampNode) + nslots * sizeof(void *);
-    ChampNode *node = malloc(size);
-    // The node keeps a pointer to its own header, so marking a trie doesn't
-    // search the object list once per node (see gc_mark_champ).
-    node->header = gc_register(gc, node, size, GC_CHAMP_NODE);
-    return node;
+    return gc_alloc_block(gc, sizeof(ChampNode) + nslots * sizeof(void *), GC_CHAMP_NODE);
 }
 
-// Helper to mark a specific GCObject
-// Returns true if the object was newly marked, false if already marked
-static bool gc_mark_object(GC *gc, void *data) {
-    if (!data) return false;
+// The few Values that are statics rather than GC objects (no header in front):
+// nil, true, false and `missing`. They hold no references to GC objects.
+static bool is_static_value(const Value *v) {
+    return v == NIL || v == TRUE || v == FALSE || v == MISSING;
+}
 
-    GCObject *obj = gc->head;
-    while (obj != NULL) {
-        if (obj->data == data) {
-            if (obj->marked) {
-                return false;  // Already marked, don't recurse
-            }
-            obj->marked = true;
-            return true;  // Newly marked, should recurse
-        }
-        obj = obj->next;
-    }
-    return false;  // Not found in GC
+// Mark `p` (a GC object, not a static); true if it was newly marked
+static bool gc_mark_object(void *p) {
+    if (!p) return false;
+    GCObject *obj = header_of(p);
+    if (obj->marked) return false;
+    obj->marked = true;
+    return true;
 }
 
 // Mark a dict/set trie node, its entries and its children. The static empty
 // tries have no header and nothing to trace.
 static void gc_mark_champ(GC *gc, ChampNode *node) {
-    if (!node || !node->header || node->header->marked) return;
-    node->header->marked = true;
+    if (!node || champ_is_static(node) || !gc_mark_object(node)) return;
 
     size_t entry_slots = champ_payload_arity(node) * node->stride;
     size_t children = champ_node_arity(node);
@@ -126,29 +118,29 @@ void gc_mark_from_value(GC *gc, Value *value) {
     if (!value) return;
 
     // Mark this value; if already marked, stop recursing
-    if (!gc_mark_object(gc, value)) {
+    if (is_static_value(value) || !gc_mark_object(value)) {
         return;
     }
 
     switch (value->type) {
         case CONS:
             if (value->data.as_cons) {
-                gc_mark_object(gc, value->data.as_cons);
+                gc_mark_object(value->data.as_cons);
                 gc_mark_from_value(gc, value->data.as_cons->car);
                 gc_mark_from_value(gc, value->data.as_cons->cdr);
             }
             break;
         case STRING:
-            gc_mark_object(gc, value->data.as_string);
+            gc_mark_object(value->data.as_string);
             break;
         case SYMBOL:
         case VARIADIC_MARKER:  // a `*name` parameter; holds its name like a symbol
-            gc_mark_object(gc, value->data.as_symbol);
+            gc_mark_object(value->data.as_symbol);
             break;
         case FUNCTION:
         case MACRO:
             if (value->data.as_function) {
-                gc_mark_object(gc, value->data.as_function);
+                gc_mark_object(value->data.as_function);
                 Callable *callable = value->data.as_function;
                 if (callable->type == DERIVED_FUNCTION || callable->type == DERIVED_MACRO) {
                     Derived *derived = &callable->data.as_derived;
@@ -172,18 +164,25 @@ static void gc_mark_from_closure(GC *gc, Closure *closure) {
     if (!closure) return;
 
     // Mark this closure; if already marked, stop recursing
-    if (!gc_mark_object(gc, closure)) {
+    if (!gc_mark_object(closure)) {
         return;
     }
 
     Variable *var, *tmp;
     HASH_ITER(hh, closure->defs, var, tmp) {
-        gc_mark_object(gc, var);
-        gc_mark_object(gc, var->key);
+        gc_mark_object(var);
+        gc_mark_object(var->key);
         gc_mark_from_value(gc, var->value);
     }
 
     gc_mark_from_closure(gc, closure->parent);
+}
+
+// Release an object and its header. Only UT_string owns anything beyond its
+// own block (its character buffer, released by utstring_done).
+static void gc_free_object(GCObject *obj) {
+    if (obj->type == GC_UTSTRING) utstring_done((UT_string *)(obj + 1));
+    free(obj);
 }
 
 // Sweep phase: free all unmarked objects
@@ -192,28 +191,8 @@ void gc_sweep(GC *gc) {
     while (*obj_ptr) {
         GCObject *obj = *obj_ptr;
         if (!obj->marked) {
-            // Remove from list
             *obj_ptr = obj->next;
-
-            // Call appropriate destructor based on type
-            switch (obj->type) {
-                case GC_UTSTRING:
-                    // utstring manages its own internal buffer - need to free it properly
-                    utstring_free((UT_string*)obj->data);
-                    break;
-                case GC_VARIABLE:
-                case GC_VALUE:
-                case GC_CONS:
-                case GC_CLOSURE:
-                case GC_CALLABLE:
-                case GC_CHAMP_NODE:  // one malloc block, slots included
-                    // These types don't have special cleanup requirements
-                    free(obj->data);
-                    break;
-            }
-
-            // Free the GCObject wrapper
-            free(obj);
+            gc_free_object(obj);
             gc->num_objects--;
         } else {
             // Unmark for next GC cycle
@@ -241,42 +220,21 @@ void gc_collect(GC *gc, Closure *root_closure) {
 // Clean up all GC-managed memory
 void gc_free_all(GC *gc) {
     // First pass: clean up hash tables in closures (uthash internal memory)
-    GCObject *obj = gc->head;
-    while (obj) {
+    for (GCObject *obj = gc->head; obj; obj = obj->next) {
         if (obj->type == GC_CLOSURE) {
-            Closure *closure = (Closure*)obj->data;
+            Closure *closure = (Closure *)(obj + 1);
             Variable *var, *tmp;
             HASH_ITER(hh, closure->defs, var, tmp) {
                 HASH_DEL(closure->defs, var);
             }
         }
-        obj = obj->next;
     }
 
     // Second pass: free all objects
-    obj = gc->head;
+    GCObject *obj = gc->head;
     while (obj) {
         GCObject *next = obj->next;
-
-        // Call appropriate destructor based on type
-        switch (obj->type) {
-            case GC_UTSTRING:
-                utstring_free((UT_string*)obj->data);
-                break;
-            case GC_CLOSURE:
-                // Hash table already cleaned up in first pass
-                free(obj->data);
-                break;
-            case GC_VALUE:
-            case GC_CONS:
-            case GC_CALLABLE:
-            case GC_VARIABLE:
-            case GC_CHAMP_NODE:
-                free(obj->data);
-                break;
-        }
-
-        free(obj);
+        gc_free_object(obj);
         obj = next;
     }
     gc->head = NULL;
