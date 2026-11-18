@@ -283,6 +283,13 @@ static void expect_list(GC *gc, const char *name, Value *v) {
     }
 }
 
+// Two's-complement negation computed in unsigned arithmetic (no signed-overflow
+// UB). Converting unsigned back to int is implementation-defined before C23, but
+// wraps (as we need) on gcc, clang and MSVC.
+static int wrapping_negate(int n) {
+    return (int)(0u - (unsigned int)n);
+}
+
 // Shared by + - * : folds `args` left to right. All operands must be the same
 // numeric type (all ints or all floats); mixing them panics, since Lyra has no
 // implicit conversions (use `int` / `float` to convert explicitly).
@@ -341,7 +348,7 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
     if (op == ARITH_SUB && is_nil(list_tail(all_args))) {
         // (- x) negates
         if (first_arg->type == FLOAT) return make_float(gc, -float_result);
-        return make_int(gc, (int)(0u - int_result));
+        return make_int(gc, wrapping_negate((int)int_result));
     }
 
     if (first_arg && first_arg->type == FLOAT) return make_float(gc, float_result);
@@ -419,12 +426,20 @@ Value *intrinsic_divmod(GC *gc, Closure *closure, Value *args) {
     if (divisor->data.as_int == 0) {
         lyra_panic("division by zero");
     }
-    if (dividend->data.as_int == INT_MIN && divisor->data.as_int == -1) {
-        lyra_panic("integer overflow in divmod");
-    }
 
-    int quot = dividend->data.as_int / divisor->data.as_int;
-    int rem = dividend->data.as_int % divisor->data.as_int;
+    int quot;
+    int rem;
+    if (divisor->data.as_int == -1) {
+        // INT_MIN / -1 and INT_MIN % -1 are UB in C (and trap on x86). Like
+        // + - *, the quotient wraps (INT_MIN / -1 is INT_MIN); remainder is 0.
+        quot = wrapping_negate(dividend->data.as_int);
+        rem = 0;
+    } else {
+        quot = dividend->data.as_int / divisor->data.as_int;
+        rem = dividend->data.as_int % divisor->data.as_int;
+    }
+    // The floor adjustment below cannot overflow: divisor != -1 here, so quot
+    // is far from INT_MIN, and rem and divisor have opposite signs when it runs.
     // C truncates toward zero; adjust to floor (Python style): the remainder
     // takes the divisor's sign.
     if (rem != 0 && ((rem < 0) != (divisor->data.as_int < 0))) {
