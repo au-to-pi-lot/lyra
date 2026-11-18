@@ -86,3 +86,24 @@ Value *intrinsic_list_directory(GC *gc, Closure *closure, Value *args);
 
 // Pattern matching
 Value *intrinsic_match(GC *gc, Closure *closure, Value *args);
+
+// Dicts and sets (intrinsics_dict.c)
+extern Value *MISSING;  // the `missing` symbol: what `get` returns for an absent key
+Value *intrinsic_dict(GC *gc, Closure *closure, Value *args);  // special form
+Value *intrinsic_set(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_get(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_assoc(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_dissoc(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_contains(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_count(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_set_add(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_set_remove(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_union(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_intersection(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_difference(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_keys(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_values(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_entries(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_members(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_is_dict(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_is_set(GC *gc, Closure *closure, Value *args);

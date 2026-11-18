@@ -29,7 +29,6 @@
 
 // Forward declarations for pattern matching helpers
 static bool pattern_matches_impl(GC *gc, Closure *closure, Value *pattern, Value *value);
-static bool values_equal(Value *a, Value *b);
 static void pattern_bind_vars(GC *gc, Closure *closure, Value *pattern, Value *value);
 
 // Argument validation helpers (defined below, before the arithmetic intrinsics)
@@ -1378,45 +1377,6 @@ static bool pattern_matches_impl(GC *gc, Closure *closure, Value *pattern, Value
 
     // Literal values (int, float, string, boolean) must match exactly
     return values_equal(pattern, value);
-}
-
-// The one equality: used by `=`, literal patterns and ,expr value patterns
-// in `match`, so they can't drift apart. Different types are never equal.
-// Atoms: numbers by value, strings by contents, interned symbols by name,
-// uninterned symbols by identity (symbol_eq). Lists compare element by
-// element, recursively. Functions and macros are equal only to themselves.
-static bool values_equal(Value *a, Value *b) {
-    // Walk list spines iteratively so long lists don't grow the C stack
-    while (a->type == CONS && b->type == CONS) {
-        if (is_nil(a) || is_nil(b)) {
-            return is_nil(a) && is_nil(b);
-        }
-        if (!values_equal(list_head(a), list_head(b))) {
-            return false;
-        }
-        a = list_tail(a);
-        b = list_tail(b);
-    }
-
-    if (a->type != b->type) {
-        return false;
-    }
-
-    switch (a->type) {
-        case INT:
-            return a->data.as_int == b->data.as_int;
-        case FLOAT:
-            return a->data.as_float == b->data.as_float;
-        case BOOLEAN:
-            return a->data.as_boolean == b->data.as_boolean;
-        case STRING:
-            return strcmp(utstring_body(a->data.as_string), utstring_body(b->data.as_string)) == 0;
-        case SYMBOL:
-            return symbol_eq(a, b);
-        default:
-            // Functions, macros: identity
-            return a == b;
-    }
 }
 
 // Helper to bind variables from pattern to values

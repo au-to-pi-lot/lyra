@@ -66,6 +66,7 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<main-checkout>/external/vcpkg/script
   - Mark phase starts from root closure and recursively marks reachable objects
     - **Cycle detection**: Checks if objects already marked before recursing to handle cycles (e.g., closures containing functions that reference the same closure)
   - Sweep phase frees unmarked objects with proper destructors (e.g., `utstring_free()` for `GC_UTSTRING` types)
+  - Dict/set trie nodes are `GC_CHAMP_NODE` objects (see "Dicts and sets" under Value Types)
   - Threshold auto-adjusts: starts at 1000 objects, doubles based on live set size
   - GC runs at safe points: after each REPL expression and after file evaluation
   - Heap can grow during evaluation but gets cleaned up between expressions
@@ -105,7 +106,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
 - **Testing**: `eval_panics()` / `ck_assert_panics()` in [tests/test_eval.c](tests/test_eval.c) evaluate with a handler installed and expose the message. Keep `ck_assert` calls outside the protected region: in Check's no-fork mode (Windows) a failed assertion `longjmp`s too and would skip `panic_pop`
 
 ## Value Types
-- Core types defined in `src/types/value.h`: CONS, INT, FLOAT, BOOLEAN, STRING, SYMBOL, FUNCTION, MACRO
+- Core types defined in `src/types/value.h`: CONS, INT, FLOAT, BOOLEAN, STRING, SYMBOL, FUNCTION, MACRO, DICT, SET
 - Closures use uthash for variable storage, keyed by the symbol's `as_symbol` UT_string bytes (with explicit length, so embedded NULs count)
 - **Interned vs. uninterned symbols** (`src/types/symbol.h`): both are SYMBOL (`is-symbol` is true for both).
   - Interned symbols (from the reader and `symbol`) are equal when their names are equal.
@@ -115,6 +116,26 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
   - Use the helpers: `symbol_eq` (equality, used by `=`, `match` and the module registry), `symbol_is(v, "quote")` (recognizing special forms and keywords: interned only, so a `(unique 'quote)` is not `quote`), `symbol_is_interned`, and `symbol_key_suffix` (strips a `*` variadic prefix while keeping the hidden serial). Don't `strcmp` symbol bodies; that compares only print names.
   - Printing: an uninterned symbol prints as `#:name`. The reader can't read that back as the same symbol. `(string s)` returns just the name (`"name"`), and `(symbol (string s))` gives back the *interned* symbol: round-tripping through text always loses identity.
 - Callables can be intrinsic (C functions) or derived (user-defined Lisp functions/macros)
+
+### Dicts and sets (persistent CHAMP tries)
+Design settled in issue #31, implemented in #33. `DICT` and `SET` values hold `data.as_champ`, the root of an immutable hash trie. Every update returns a new root that shares all untouched nodes with the old one, so old versions stay valid and unchanged. There is no mutable dict.
+- **Trie** ([src/types/champ.h](src/types/champ.h)/[.c](src/types/champ.c)): CHAMP (Steindorfer & Vinju, OOPSLA 2015). A node consumes 5 bits of the 64-bit key hash (shifts 0, 5, ..., 60, the last level has 4 bits), so 13 levels at most. `datamap` marks slots holding an inline entry and `nodemap` marks slots holding a child; `slots[]` holds the inline entries in slot order (`stride` Values each: key and value for a dict, key only for a set), then the children. Keys with identical full hashes go into a **collision node** below the last level (flat, unordered). `size` counts the subtree's entries, so `count` is O(1).
+  - **Canonical form**: a non-root node always holds 2 or more entries. When a removal shrinks a child to one entry, the parent inlines that entry (`copy_child_to_entry`), cascading upward. So a trie's shape depends only on its contents, and `champ_equal` is a parallel walk (collision nodes are compared as unordered lists). `champ_validate` checks all invariants; the tests call it often.
+  - Empty tries are two static nodes (`champ_empty(stride)`), not GC-registered.
+  - The trie takes each key's hash from its caller (computed by `champ_hash`), and rehashes stored keys only when an inline entry has to be pushed down into a new child. `champ_set_hash_function` is a test hook that swaps the hash function, to force collision nodes and deep paths.
+  - No transient (in-place) bulk construction yet: `(dict ...)` with many pairs does one path-copying insert per pair.
+- **GC**: nodes are `GC_CHAMP_NODE` objects, one `malloc` block including `slots`. Each node keeps a pointer to its own `GCObject` header (`node->header`), so `gc_mark_champ` marks a node in O(1) instead of searching the object list. Keys and values are marked through `gc_mark_from_value` as usual.
+- **Keys need total equality**: floats, functions and macros are rejected, and so is any list containing one, or a dict whose *values* contain one (`value_unhashable_part` in [src/value_hash.c](src/value_hash.c)). Every intrinsic that takes a key checks this, `get` and `contains?` included, and panics: `assoc: a dict key must have total equality, but (1 2.5) contains a float, 2.5`. Dict and set values (as opposed to keys) can be anything.
+- **`missing`**: one static uninterned symbol (`MISSING` in [src/intrinsics_dict.c](src/intrinsics_dict.c), bound as the global `missing`). `get` returns it for an absent key, so it's distinct from a stored `nil`. Its identity key is `missing\0builtin`: a non-numeric suffix, so no `unique`/`gensym` symbol can equal it. Prints as `#:missing`. Meant to go away once `Option` exists.
+- **Order**: iteration (printing, `keys`, `values`, `entries`, `members`) follows the trie, i.e. the hash, so it's unspecified and changes from run to run unless `LYRA_HASH_SEED` is set. There is no small-dict special case, so small dicts don't accidentally iterate in insertion order.
+- **Printing** ([src/repr.c](src/repr.c)): constructor form, `(dict ('a 1) ("k" '(1 2)))` and `(set 'a 2)`. Parts are printed as expressions, so symbols and non-empty lists get a quote, and the printed text evaluates back to an equal value (unless a dict sits inside a quoted list).
+
+### Value hashing
+Split like Rust's `Hash`/`Hasher`: [src/value_hash.c](src/value_hash.c) decides *what* each type feeds, [src/hash.c](src/hash.c) is the only place that knows the algorithm.
+- **Hasher**: streaming SipHash-1-3 (`hasher_init`/`hasher_write`/`hasher_write_u8`/`hasher_write_u64`/`hasher_finish`; words are fed as 8 little-endian bytes). Tested against reference values from CPython's own SipHash-1-3 (`hash(bytes)` with `PYTHONHASHSEED` set).
+- **Key**: random per process, from `platform_random_bytes` ([src/platform_random.c](src/platform_random.c): `BCryptGenRandom` on Windows, `/dev/urandom` elsewhere; isolated from `value.h` for the `windows.h` reason above; CMake links `bcrypt` on Windows). Setting `LYRA_HASH_SEED` to a decimal integer derives the key from it (splitmix64), for reproducible runs; anything else in it is an error (message on stderr, exit 1). The key is drawn lazily on the first hash.
+- **Format** (`a == b` implies `hash(a) == hash(b)`, with `values_equal` as the equality): a type tag byte first, so `1` and `"1"` differ. Ints: the value as a 64-bit word. Booleans: one byte. Strings: bytes up to the first NUL (matching `values_equal`'s `strcmp`), then a `0xFF` terminator, so `("ab" "c")` and `("a" "bc")` differ. Symbols: length and bytes of the identity key, so interned symbols hash by name and uninterned ones by their serial, never by pointer (not cached at creation: the reader has no intern table to cache in). Lists: length, then elements. Dicts/sets: count plus the wrapping sum of an independent hash per entry, which is order-independent.
+- **Equality** (`values_equal`) moved from `intrinsics.c` to [src/types/value.c](src/types/value.c) so the trie can use it; it compares dicts and sets with `champ_equal`.
 
 ## Recursion & Macros
 - **Z Combinator**: The Z combinator (call-by-value Y combinator) now works correctly for recursive functions
@@ -172,13 +193,28 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
   - Atoms: numbers by value, strings by contents, booleans by value, interned symbols by name, uninterned symbols (`unique`/`gensym`) by identity
   - Lists are compared **structurally**, recursively, applying the atom rules at every level: `(= '(1 (2 "x")) '(1 (2 "x")))` → `true`. A list of uniques equals another only if it holds the same uniques
   - Functions and macros are equal only to themselves: `(= car car)` → `true`, but two separately written `(lambda (x) x)` are not equal
-  - Implemented by `values_equal` in `src/intrinsics.c`. `match` uses the same function for literal and `,expr` patterns, so the three can't drift apart
+  - Dicts and sets compare by contents, regardless of insertion order: `(= (dict ('a 1) ('b 2)) (dict ('b 2) ('a 1)))` → `true`. A dict never equals a set, even when both are empty
+  - Implemented by `values_equal` in `src/types/value.c`. `match` uses the same function for literal and `,expr` patterns, and dict/set lookup uses it for keys, so they can't drift apart
 
 **List Operations**:
 - `car` - Get first element: `(car '(1 2 3))` → `1`
 - `cdr` - Get rest of list: `(cdr '(1 2 3))` → `(2 3)`
 - `cons` - Prepend element: `(cons 1 '(2 3))` → `(1 2 3)`
 - `apply` - Call function with list as args: `(apply + '(1 2 3))` → `6`
+
+**Dicts and Sets** (persistent: every operation returns a new value and leaves its arguments unchanged; see "Dicts and sets" under Value Types; [src/intrinsics_dict.c](src/intrinsics_dict.c)):
+- `dict` - special form: `(dict ('a 1) ('b (+ 1 1)))`. Each argument is a `(key value)` list whose two parts are evaluated. A repeated key keeps its last value. Anything other than a two-element list panics (`dict expects (key value) pairs, but got 5`)
+- `set` - function: `(set 'a 'b 'c)`. Duplicates collapse
+- `get` - `(get d k)` → the value, or `missing` if `k` is absent; `(get d k default)` returns `default` instead. Dicts only
+- `missing` - the value `get` returns for an absent key: `(= (get d 'k) missing)`. Distinct from a stored `nil`
+- `assoc` / `dissoc` - `(assoc d k v)`, `(dissoc d k)`: a dict with `k` set / removed (unchanged `d` if `dissoc`'s key is absent)
+- `set-add` / `set-remove` - `(set-add s x)`, `(set-remove s x)`
+- `union`, `intersection`, `difference` - one or more sets: `(union a b c)`, `(difference a b c)` = members of `a` in neither `b` nor `c`. (`+`/`-` have no type dispatch, so these are named functions)
+- `contains?` - `(contains? d-or-s k)`: key of a dict / member of a set
+- `count` - `(count d-or-s)`: number of entries (dicts and sets only, not lists)
+- `keys`, `values`, `entries` - lists of a dict's keys, values, `(key value)` pairs; `members` - a set's members as a list. Order unspecified. (Stand-ins until the iterator protocol exists)
+- `is-dict`, `is-set` - type predicates
+- Keys and members must have total equality: floats, functions and macros panic, including when nested in a list key (`(set 1 2.0)` → `set: a set member must have total equality, but 2.0 is a float`). Values can be anything
 
 **Type Constructors** (polymorphic):
 - `string` - Convert to string or concatenate
@@ -466,10 +502,12 @@ The Lyra interpreter supports multiple modes:
 - Never build a gensym'd name as text (`string`/`symbol`/`eval-string`). That yields an interned symbol and throws away the hygiene. No prelude macro does this. `import`'s `*module-loaded-...*` markers are deliberately interned, because every `import` of a module must find the same marker
 
 ## Testing
-- **Test Coverage**: 127 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
+- **Test Coverage**: 150 tests across 4 suites, all passing ✅ (including 15 `match` pattern-matching tests)
   - `test_eval.c`: 86 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
   - `test_parser.c`: 16 tests covering lexing and parsing (including integer literal bounds)
+  - `test_dict.c`: 23 tests for dicts, sets and hashing: SipHash-1-3 reference vectors and streaming, equal-values-hash-equal, trie persistence, random insert/remove workloads checked against an array and `champ_validate` (normal hash, all-colliding hash, few-bucket hash, deep-path hashes), canonical equality across insertion orders, `missing` vs `nil`, unhashable keys, printing round trips, set algebra, 3000-key dicts, and GC survival (including collision nodes)
+  - The GC tests are kept small on purpose: `gc_mark_object` searches the whole object list once per marked object (only trie nodes skip that, via their header pointer), so a collection costs roughly live objects x heap objects
 - Run tests with `make test` (Linux/macOS) or `ctest --test-dir build -C Debug` (Windows)
 - Tests verify:
   - Basic evaluation (integers, floats, strings, symbols)

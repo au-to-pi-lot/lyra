@@ -2,10 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include "types/list.h"
+#include "types/champ.h"
 
 #define GC_INITIAL_THRESHOLD 1000
 
 static void gc_mark_from_closure(GC *gc, Closure *closure);
+void gc_mark_from_value(GC *gc, Value *value);
 
 // Initialize the garbage collector
 void gc_init(GC *gc) {
@@ -75,6 +77,15 @@ UT_string *gc_alloc_string(GC *gc) {
     return str;
 }
 
+ChampNode *gc_alloc_champ_node(GC *gc, size_t nslots) {
+    size_t size = sizeof(ChampNode) + nslots * sizeof(void *);
+    ChampNode *node = malloc(size);
+    // The node keeps a pointer to its own header, so marking a trie doesn't
+    // search the object list once per node (see gc_mark_champ).
+    node->header = gc_register(gc, node, size, GC_CHAMP_NODE);
+    return node;
+}
+
 // Helper to mark a specific GCObject
 // Returns true if the object was newly marked, false if already marked
 static bool gc_mark_object(GC *gc, void *data) {
@@ -92,6 +103,22 @@ static bool gc_mark_object(GC *gc, void *data) {
         obj = obj->next;
     }
     return false;  // Not found in GC
+}
+
+// Mark a dict/set trie node, its entries and its children. The static empty
+// tries have no header and nothing to trace.
+static void gc_mark_champ(GC *gc, ChampNode *node) {
+    if (!node || !node->header || node->header->marked) return;
+    node->header->marked = true;
+
+    size_t entry_slots = champ_payload_arity(node) * node->stride;
+    size_t children = champ_node_arity(node);
+    for (size_t i = 0; i < entry_slots; i++) {
+        gc_mark_from_value(gc, node->slots[i]);
+    }
+    for (size_t i = 0; i < children; i++) {
+        gc_mark_champ(gc, node->slots[entry_slots + i]);
+    }
 }
 
 // Mark all objects reachable from a value
@@ -130,6 +157,10 @@ void gc_mark_from_value(GC *gc, Value *value) {
                     gc_mark_from_value(gc, derived->definition);
                 }
             }
+            break;
+        case DICT:
+        case SET:
+            gc_mark_champ(gc, value->data.as_champ);
             break;
         default:
             break;
@@ -175,6 +206,7 @@ void gc_sweep(GC *gc) {
                 case GC_CONS:
                 case GC_CLOSURE:
                 case GC_CALLABLE:
+                case GC_CHAMP_NODE:  // one malloc block, slots included
                     // These types don't have special cleanup requirements
                     free(obj->data);
                     break;
@@ -239,6 +271,7 @@ void gc_free_all(GC *gc) {
             case GC_CONS:
             case GC_CALLABLE:
             case GC_VARIABLE:
+            case GC_CHAMP_NODE:
                 free(obj->data);
                 break;
         }

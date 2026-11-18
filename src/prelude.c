@@ -96,6 +96,27 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function(gc, closure, "string", &intrinsic_string);
     define_intrinsic_function(gc, closure, "symbol", &intrinsic_symbol);
 
+    // Dicts and sets (persistent; see types/champ.h)
+    define_intrinsic_value(gc, closure, "missing", MISSING);
+    define_intrinsic_macro(gc, closure, "dict", &intrinsic_dict);  // evaluates each (key value) pair
+    define_intrinsic_function(gc, closure, "set", &intrinsic_set);
+    define_intrinsic_function(gc, closure, "get", &intrinsic_get);
+    define_intrinsic_function(gc, closure, "assoc", &intrinsic_assoc);
+    define_intrinsic_function(gc, closure, "dissoc", &intrinsic_dissoc);
+    define_intrinsic_function(gc, closure, "contains?", &intrinsic_contains);
+    define_intrinsic_function(gc, closure, "count", &intrinsic_count);
+    define_intrinsic_function(gc, closure, "set-add", &intrinsic_set_add);
+    define_intrinsic_function(gc, closure, "set-remove", &intrinsic_set_remove);
+    define_intrinsic_function(gc, closure, "union", &intrinsic_union);
+    define_intrinsic_function(gc, closure, "intersection", &intrinsic_intersection);
+    define_intrinsic_function(gc, closure, "difference", &intrinsic_difference);
+    define_intrinsic_function(gc, closure, "keys", &intrinsic_keys);
+    define_intrinsic_function(gc, closure, "values", &intrinsic_values);
+    define_intrinsic_function(gc, closure, "entries", &intrinsic_entries);
+    define_intrinsic_function(gc, closure, "members", &intrinsic_members);
+    define_intrinsic_function(gc, closure, "is-dict", &intrinsic_is_dict);
+    define_intrinsic_function(gc, closure, "is-set", &intrinsic_is_set);
+
     // Directory operations
     define_intrinsic_function(gc, closure, "list-directory", &intrinsic_list_directory);
 
