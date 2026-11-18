@@ -2268,7 +2268,12 @@ START_TEST(test_no_implicit_promotion)
     ck_assert_str_eq(eval_repr(&gc, closure, "(- -3)"), "3");
     ck_assert_str_eq(eval_repr(&gc, closure, "(- 0)"), "0");
     ck_assert_panics(&gc, closure, "(-)", "- expects at least 1 argument, but got 0");
-    ck_assert_panics(&gc, closure, "(- (- 0 2147483647 1))", "integer overflow in -");
+    // Int arithmetic wraps in two's complement
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- (- 0 2147483647 1))"), "-2147483648");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(+ 2147483647 1)"), "-2147483648");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(- (- 0 2147483647 1) 1)"), "2147483647");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(* 2147483647 2)"), "-2");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(* (- 0 2147483647 1) -1)"), "-2147483648");
     ck_assert_str_eq(eval_repr(&gc, closure, "(* 2.5 2.0)"), "5.0");
 
     // Explicit conversion makes mixed arithmetic expressible

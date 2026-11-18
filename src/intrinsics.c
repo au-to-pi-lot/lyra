@@ -289,10 +289,12 @@ static void expect_list(GC *gc, const char *name, Value *v) {
 // For - the first argument is the starting value instead of being subtracted.
 // The empty fold is the int identity (0 for +, 1 for *); (-) panics.
 // With a single argument, - negates it.
+// Int arithmetic wraps around in two's complement. It is computed in unsigned
+// arithmetic (well-defined modulo 2^N) so signed-overflow UB never happens.
 typedef enum { ARITH_ADD, ARITH_SUB, ARITH_MUL } ArithOp;
 
 static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
-    int int_result = (op == ARITH_MUL) ? 1 : 0;
+    unsigned int int_result = (op == ARITH_MUL) ? 1u : 0u;
     float float_result = 0.0f;
     Value *first_arg = NULL;  // determines the type of the whole fold
     Value *all_args = args;
@@ -308,7 +310,7 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
             }
             if (op == ARITH_SUB) {
                 if (arg->type == FLOAT) float_result = arg->data.as_float;
-                else int_result = arg->data.as_int;
+                else int_result = (unsigned int)arg->data.as_int;
                 continue;
             }
         } else if (arg->type != first_arg->type) {
@@ -324,7 +326,7 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
                 case ARITH_MUL: float_result *= operand; break;
             }
         } else {
-            int operand = arg->data.as_int;
+            unsigned int operand = (unsigned int)arg->data.as_int;
             switch (op) {
                 case ARITH_ADD: int_result += operand; break;
                 case ARITH_SUB: int_result -= operand; break;
@@ -339,12 +341,11 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
     if (op == ARITH_SUB && is_nil(list_tail(all_args))) {
         // (- x) negates
         if (first_arg->type == FLOAT) return make_float(gc, -float_result);
-        if (int_result == INT_MIN) lyra_panic("integer overflow in -");
-        return make_int(gc, -int_result);
+        return make_int(gc, (int)(0u - int_result));
     }
 
     if (first_arg && first_arg->type == FLOAT) return make_float(gc, float_result);
-    return make_int(gc, int_result);
+    return make_int(gc, (int)int_result);
 }
 
 Value *intrinsic_add(GC *gc, Closure *closure, Value *args) {
