@@ -11,6 +11,8 @@ Lyra is a high-performance, garbage-collected, functional-first programming lang
 - **Ergonomics matter**: Learning from decades of language design
 - **Native concurrency**: Multi-threaded and concurrent from the ground up
 - **Tasteful syntax**: Convenience features done right
+- **What you reach for first doesn't explode**: The short, obvious name is the total, safe operation. A variant that panics or skips a check gets the longer, explicit name (Rust gets this backwards: `v[i]` panics while `v.get(i)` is the safe one).
+- **Cleanup doesn't depend on the GC**: Files, sockets and locks are released by scope, deterministically, never by finalizers or collection timing (CPython refcounting vs PyPy, Java finalizers)
 
 ## Language Influences
 
@@ -86,10 +88,11 @@ let fac := (n) ->
 Lexer emits INDENT/DEDENT tokens that parser treats as block delimiters. This keeps parser simple - whitespace handling is purely lexer concern.
 
 **Whitespace Rules:**
-- All spaces OR all tabs - no mixing within a file
+- Spaces are the preferred style, but tabs are allowed (no Haskell-style tab ban)
+- All spaces OR all tabs - mixing within a file is an error
 - Lexer tracks which style is used, errors on mixed indentation
-- Both camps can use their preference
 - Blank lines and comments ignored for indentation
+- Indentation at the REPL (pasting blocks with blank lines, knowing when an entry is done) is open: #29
 
 **Sugar-First Philosophy:**
 
@@ -155,7 +158,7 @@ Sugar is defined in Lyra itself via `defsyntax`, not hardcoded in C:
 
 Benefits:
 - Sugar defined in the language, not the implementation
-- Users can add custom syntax transformations
+- Users can add custom syntax transformations (*under reconsideration*: per-library dialects make code hard to read and hard for tooling to parse without running it; `defsyntax` may become internal to the prelude/stdlib. #30)
 - Introspectable and modifiable
 - Self-documenting transformations
 
@@ -353,6 +356,7 @@ rational(2, 3) / 2.0      # 0.333... (float contaminates)
 
 **Other Syntax Features:**
 - **`=` operator**: Binding/assignment, `==` for comparison
+- **Assignment never creates a binding**: assigning to a name that isn't in scope is an error, never an implicit new variable (Lua's globals-by-typo)
 - **`->` arrow**: Function definitions (single or multi-line)
 - **Range syntax**: `1..n` (Rust/Ruby style)
 - **Destructuring assignment**: Pattern matching in bindings
@@ -488,7 +492,7 @@ Immutable values don't need OOP. Traits (Rust) / Type Classes (Haskell) / Protoc
 **Why Traits?**
 - Objects assume identity and mutation
 - Traits: behavior for values without state
-- Retroactive implementation (add traits to existing types)
+- Retroactive implementation (add traits to existing types), within Rust's coherence rules: an implementation must live with the trait or the type, and orphan instances are not allowed. Named implementations are out, since use sites shouldn't have to pick one. #24
 - Clean separation: data (structs) vs behavior (traits)
 
 **Syntax:**
@@ -676,9 +680,9 @@ Note: Linear/affine types considered but deferred - redundant with atoms/mutexes
 
 ## Error Handling
 
-**Result Types over Exceptions:**
+**Result Types, No Exceptions:**
 
-Exceptions are procedural and hide control flow. Lyra uses Result types for recoverable errors:
+Lyra has no exceptions. They hide control flow, and checked exceptions in particular don't compose with higher-order functions (Java). Errors that belong in a function's signature are return values. Lyra uses Result types for recoverable errors (propagation sugar and the rest of the design: #23):
 
 ```scheme
 (deftype Result [T E]
@@ -708,7 +712,12 @@ panic("Unreachable code reached!")  ; Unwinds, prints stack trace, kills thread/
 
 **Guidelines:**
 - **Result**: Recoverable errors caller should handle (file not found, parse error, validation)
-- **Panic**: Programmer errors that shouldn't happen (assertion failure, unreachable code, index out of bounds)
+- **Panic**: Programmer errors that shouldn't happen (assertion failure, unreachable code, an explicitly unchecked access that fails)
+- The default spelling of an operation that can fail is the total one, returning `Option`/`Result`. A panicking shortcut, if one exists, gets the longer name (see Core Philosophy).
+
+**Resource Cleanup:**
+
+Resources are released by scope, deterministically, on every exit path including panics. No finalizers. GC timing is never observable through resource behavior.
 
 **Rich Diagnostics (Rust-inspired):**
 
@@ -766,6 +775,9 @@ Reflection is primarily for tooling, not core language features.
 - **Byte access is first-class**: viewing a string's bytes is cheap and needs no copy, because it matters even for Unicode text (protocols, hashing, parsing).
 - No Python-style variable-width storage (PEP 393) to buy O(1) code-point indexing.
 - Separate mutable byte buffers for performance-critical code.
+- **File paths and OS strings are not text**: they get their own type (Rust's `OsString`, not Python's `surrogateescape`). #25
+- **No ambient locale**: text operations, number parsing and formatting use a fixed default (US English) unless the programmer passes a locale explicitly. #26
+- Slices sharing their parent's buffer can pin a large buffer alive (Java before 7u6); how to handle that is open: #27
 
 ```scheme
 let s := "hello 世界"
@@ -788,6 +800,8 @@ Rust-style explicit sizing when performance matters:
 - `Complex` - complex numbers
 
 Clear types, no implicit conversions, hardware-close when needed.
+
+**Overflow** behaves the same in every build, never undefined (C) or build-dependent (Rust debug vs release). Wraparound is the preferred definition. Exact semantics, and how they relate to `Integer`: #28
 
 **Equality and ordering (Rust's model):** partial and total are separate traits. Floats implement only the partial versions, since IEEE 754's NaN ≠ NaN breaks reflexivity. Anything that needs lawful equality or ordering requires the total trait: set members, map keys, sorting, deduplication. Making partial equality ergonomic, so that floats don't become a constant papercut, is open: #17.
 
@@ -928,6 +942,7 @@ Next steps:
 - **Not pure functional**: Pragmatism over dogma
 - **Not minimal**: Syntax sugar is good, actually
 - **Not slow**: Performance is a feature
+- **No first-class continuations**: no `call/cc`, and no user-facing delimited continuations. Rank-and-file programmers don't need them, and they cost performance everywhere
 
 ## Anti-Patterns to Avoid
 
@@ -968,6 +983,15 @@ Learning from others' mistakes:
 **Go: Leaked Goroutines**
 - Unstructured `go` lets tasks outlive their purpose. Errors vanish, leaks pile up
 - Structured concurrency: task lifetimes bounded by scope (#18)
+
+**Lua: Assignment Creates Globals**
+- A typo in an assignment silently creates a new global
+- Assignment never creates a binding (see Syntax)
+
+**Java: Checked Exceptions and Finalizers**
+- Checked exceptions don't compose with `map`, folds or any higher-order function
+- Finalizers make cleanup depend on GC timing
+- No exceptions, errors are values. Cleanup is scoped (see Error Handling)
 
 **JavaScript: Standard Library and Naming Consistency**
 - Comprehensive standard library from the start
