@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 
 // Helper to create tokens (takes ownership of value)
@@ -230,7 +232,16 @@ static Value* parse_atom(GC *gc, Token* tok) {
             if (utstring_find(tok->value, 0, ".", 1) >= 0) {
                 val = make_float(gc, atof(utstring_body(tok->value)));
             } else {
-                val = make_int(gc, atoi(utstring_body(tok->value)));
+                // strtoll, not strtol: long is 32-bit on Windows. Out-of-range
+                // literals are a parse error (NULL), never a silent wrap.
+                const char *text = utstring_body(tok->value);
+                errno = 0;
+                long long n = strtoll(text, NULL, 10);
+                if (errno == ERANGE || n < INT_MIN || n > INT_MAX) {
+                    fprintf(stderr, "Integer literal out of range: %s\n", text);
+                    return NULL;
+                }
+                val = make_int(gc, (int)n);
             }
             break;
         }
@@ -294,6 +305,10 @@ static Value* parse_expr(GC *gc, Lexer *lex, Token *current) {
     } else if (current->type == TOKEN_QUOTE) {
         Token next = next_token(lex);
         Value *expr = parse_expr(gc, lex, &next);
+        if (!expr) {
+            free_token(current);
+            return NULL;
+        }
         Value *symbol = symbol_from_char(gc, "quote");
         // Build list (quote expr) by pushing in reverse order
         Value *result = NIL;
@@ -305,6 +320,10 @@ static Value* parse_expr(GC *gc, Lexer *lex, Token *current) {
     } else if (current->type == TOKEN_QUASIQUOTE_BACKTICK) {
         Token next = next_token(lex);
         Value *expr = parse_expr(gc, lex, &next);
+        if (!expr) {
+            free_token(current);
+            return NULL;
+        }
         Value *symbol = symbol_from_char(gc, "quasiquote");
         // Build list (quasiquote expr) by pushing in reverse order
         Value *result = NIL;
@@ -316,6 +335,10 @@ static Value* parse_expr(GC *gc, Lexer *lex, Token *current) {
     } else if (current->type == TOKEN_UNQUOTE_COMMA) {
         Token next = next_token(lex);
         Value *expr = parse_expr(gc, lex, &next);
+        if (!expr) {
+            free_token(current);
+            return NULL;
+        }
         Value *symbol = symbol_from_char(gc, "unquote");
         // Build list (unquote expr) by pushing in reverse order
         Value *result = NIL;
@@ -327,6 +350,10 @@ static Value* parse_expr(GC *gc, Lexer *lex, Token *current) {
     } else if (current->type == TOKEN_UNQUOTE_SPLICING_COMMA_AT) {
         Token next = next_token(lex);
         Value *expr = parse_expr(gc, lex, &next);
+        if (!expr) {
+            free_token(current);
+            return NULL;
+        }
         Value *symbol = symbol_from_char(gc, "unquote-splicing");
         // Build list (unquote-splicing expr) by pushing in reverse order
         Value *result = NIL;

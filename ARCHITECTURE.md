@@ -100,6 +100,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
 - **Deliberately not panics**: `(car nil)`/`(cdr nil)` are `nil`; `=` across different types (including `(= 1 1.0)`) is `false`. `()` evaluates to `nil` (self-evaluating, so `(())` panics with `not callable: ()`). There is no implicit int/float conversion anywhere; use `int`/`float`
 - **GC safety**: collection runs only at top-level safe points (after a REPL expression / file / `-c` run), never mid-evaluation, so a panic can't interrupt a collection. Whatever the aborted evaluation allocated stays registered and is swept by the next `gc_collect` if unreachable. `gc_alloc_cons` initializes `car`/`cdr` to `NIL`, so a half-built list never holds garbage pointers
 - **Parser memory**: the parser never panics; it reports failure by returning `NULL`. So its manually managed tokens can't leak through a `longjmp`. Callers that turn a parse failure into a panic (`eval-string`) do so after `parse_with_pos` has returned
+- **Integer literals**: parsed with `strtoll` and range-checked against `INT_MIN`/`INT_MAX` (and `ERANGE`). The `-` is part of the literal token, so `-2147483648` is valid. An out-of-range literal is a parse error: the parser prints `Integer literal out of range: <literal>` to stderr and returns `NULL` (never wraps), which the REPL, `-c`/file mode and `eval-string` then report as their usual generic parse failure
 - **setjmp hygiene**: keep functions that call `setjmp` small (`repl_eval`, `run_source`, the test helpers), so no locals change between `setjmp` and a possible `longjmp`. Locals that must be read in the panic branch after being changed need `volatile`
 - **Testing**: `eval_panics()` / `ck_assert_panics()` in [tests/test_eval.c](tests/test_eval.c) evaluate with a handler installed and expose the message. Keep `ck_assert` calls outside the protected region: in Check's no-fork mode (Windows) a failed assertion `longjmp`s too and would skip `panic_pop`
 
@@ -465,10 +466,10 @@ The Lyra interpreter supports multiple modes:
 - Never build a gensym'd name as text (`string`/`symbol`/`eval-string`). That yields an interned symbol and throws away the hygiene. No prelude macro does this. `import`'s `*module-loaded-...*` markers are deliberately interned, because every `import` of a module must find the same marker
 
 ## Testing
-- **Test Coverage**: 125 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
+- **Test Coverage**: 127 tests across 3 suites, all passing ✅ (including 15 `match` pattern-matching tests)
   - `test_eval.c`: 86 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
-  - `test_parser.c`: 14 tests covering lexing and parsing
+  - `test_parser.c`: 16 tests covering lexing and parsing (including integer literal bounds)
 - Run tests with `make test` (Linux/macOS) or `ctest --test-dir build -C Debug` (Windows)
 - Tests verify:
   - Basic evaluation (integers, floats, strings, symbols)
