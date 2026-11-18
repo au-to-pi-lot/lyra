@@ -61,6 +61,9 @@ typedef struct GC {
     size_t max_objects;  // trigger GC when we hit this
     size_t gensym_counter;  // numbers gensym print names (G__0, G__1, ...)
     size_t uninterned_counter;  // serial in uninterned symbol keys (see symbol.h)
+    void **mark_stack;  // the mark phase's worklist, kept between collections
+    size_t mark_len;
+    size_t mark_cap;
 } GC;
 
 /// @struct Cons

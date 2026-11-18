@@ -62,10 +62,10 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<main-checkout>/external/vcpkg/script
 
 ## Memory Management
 - **GC Implementation**: Basic mark-and-sweep garbage collector in `src/gc.c`
-  - All allocations tracked in a linked list via `GCObject` headers
-  - Mark phase starts from root closure and recursively marks reachable objects
-    - **Cycle detection**: Checks if objects already marked before recursing to handle cycles (e.g., closures containing functions that reference the same closure)
-  - Sweep phase frees unmarked objects with proper destructors (e.g., `utstring_free()` for `GC_UTSTRING` types)
+  - **Object layout**: every GC object is one `malloc` block, a `GCObject` header immediately followed by the object, so the header of object `p` is `(GCObject *)p - 1` (`header_of` in gc.c). All blocks are linked through the headers for sweeping. `gc_alloc_block` is the only allocator. A `UT_string` is initialized in place (`utstring_init`, never `utstring_new`) and released at sweep with `utstring_done`.
+  - **Statics have no header**: nil, true, false, `missing` and the two empty tries (`champ_is_static`) are statics, not GC objects, so their `p - 1` is garbage. The tracer filters them out explicitly (`is_static_value`, `champ_is_static`); any new static that can be reachable from a GC object must be added there.
+  - **Mark phase** starts from the root closure and is an explicit worklist, not recursion, so a 1M-element list or a 100k-deep nest can't overflow the C stack. An object is marked when it is *pushed* (a header flag, which also handles cycles), so each enters the stack at most once. `gc_trace` is the single per-type function listing an object's direct children (a new GC object type needs a case there). A cons pushes `cdr` before `car`, so the stack stays about as deep as the nesting rather than the length. The stack is a growable array in the `GC` struct (`mark_stack`), reused by every collection and freed by `gc_free_all`; if it can't grow, the interpreter aborts with a message.
+  - Sweep phase frees unmarked objects (`gc_free_object`)
   - Dict/set trie nodes are `GC_CHAMP_NODE` objects (see "Dicts and sets" under Value Types)
   - Threshold auto-adjusts: starts at 1000 objects, doubles based on live set size
   - GC runs at safe points: after each REPL expression and after file evaluation
@@ -124,7 +124,7 @@ Design settled in issue #31, implemented in #33. `DICT` and `SET` values hold `d
   - Empty tries are two static nodes (`champ_empty(stride)`), not GC-registered.
   - The trie takes each key's hash from its caller (computed by `champ_hash`), and rehashes stored keys only when an inline entry has to be pushed down into a new child. `champ_set_hash_function` is a test hook that swaps the hash function, to force collision nodes and deep paths.
   - No transient (in-place) bulk construction yet: `(dict ...)` with many pairs does one path-copying insert per pair.
-- **GC**: nodes are `GC_CHAMP_NODE` objects, one `malloc` block including `slots`. Each node keeps a pointer to its own `GCObject` header (`node->header`), so `gc_mark_champ` marks a node in O(1) instead of searching the object list. Keys and values are marked through `gc_mark_from_value` as usual.
+- **GC**: nodes are `GC_CHAMP_NODE` objects, one `malloc` block including `slots`. `gc_trace` pushes a node's inline keys/values and child nodes (skipping the static empty tries).
 - **Keys need total equality**: floats, functions and macros are rejected, and so is any list containing one, or a dict whose *values* contain one (`value_unhashable_part` in [src/value_hash.c](src/value_hash.c)). Every intrinsic that takes a key checks this, `get` and `contains?` included, and panics: `assoc: a dict key must have total equality, but (1 2.5) contains a float, 2.5`. Dict and set values (as opposed to keys) can be anything.
 - **`missing`**: one static uninterned symbol (`MISSING` in [src/intrinsics_dict.c](src/intrinsics_dict.c), bound as the global `missing`). `get` returns it for an absent key, so it's distinct from a stored `nil`. Its identity key is `missing\0builtin`: a non-numeric suffix, so no `unique`/`gensym` symbol can equal it. Prints as `#:missing`. Meant to go away once `Option` exists.
 - **Order**: iteration (printing, `keys`, `values`, `entries`, `members`) follows the trie, i.e. the hash, so it's unspecified and changes from run to run unless `LYRA_HASH_SEED` is set. There is no small-dict special case, so small dicts don't accidentally iterate in insertion order.
@@ -507,7 +507,7 @@ The Lyra interpreter supports multiple modes:
   - `test_list.c`: 25 tests covering list operations
   - `test_parser.c`: 16 tests covering lexing and parsing (including integer literal bounds)
   - `test_dict.c`: 23 tests for dicts, sets and hashing: SipHash-1-3 reference vectors and streaming, equal-values-hash-equal, trie persistence, random insert/remove workloads checked against an array and `champ_validate` (normal hash, all-colliding hash, few-bucket hash, deep-path hashes), canonical equality across insertion orders, `missing` vs `nil`, unhashable keys, printing round trips, set algebra, 3000-key dicts, and GC survival (including collision nodes)
-  - The GC tests are kept small on purpose: `gc_mark_object` searches the whole object list once per marked object (only trie nodes skip that, via their header pointer), so a collection costs roughly live objects x heap objects
+  - GC tests include a collection over a 1M-element list and a 100k-deep nested list (`test_eval.c`), which overflowed the recursive marker
 - Run tests with `make test` (Linux/macOS) or `ctest --test-dir build -C Debug` (Windows)
 - Tests verify:
   - Basic evaluation (integers, floats, strings, symbols)

@@ -1,5 +1,6 @@
 #include "gc.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include "types/list.h"
 #include "types/champ.h"
@@ -8,9 +9,6 @@
 
 #define GC_INITIAL_THRESHOLD 1000
 
-static void gc_mark_from_closure(GC *gc, Closure *closure);
-void gc_mark_from_value(GC *gc, Value *value);
-
 // Initialize the garbage collector
 void gc_init(GC *gc) {
     gc->head = NULL;
@@ -18,6 +16,9 @@ void gc_init(GC *gc) {
     gc->max_objects = GC_INITIAL_THRESHOLD;
     gc->gensym_counter = 0;
     gc->uninterned_counter = 0;
+    gc->mark_stack = NULL;
+    gc->mark_len = 0;
+    gc->mark_cap = 0;
 }
 
 // Every GC object is one malloc block: a GCObject header immediately followed
@@ -83,99 +84,130 @@ ChampNode *gc_alloc_champ_node(GC *gc, size_t nslots) {
     return gc_alloc_block(gc, sizeof(ChampNode) + nslots * sizeof(void *), GC_CHAMP_NODE);
 }
 
+// ---- Marking ---------------------------------------------------------------
+//
+// Marking is an explicit worklist, not recursion, so a long list or a deeply
+// nested structure can't overflow the C stack. An object is marked when it is
+// pushed, so it enters the stack at most once; the stack's memory belongs to
+// the GC and is reused by every collection.
+
 // The few Values that are statics rather than GC objects (no header in front):
-// nil, true, false and `missing`. They hold no references to GC objects.
+// nil, true, false and `missing`. They reference no GC objects.
 static bool is_static_value(const Value *v) {
     return v == NIL || v == TRUE || v == FALSE || v == MISSING;
 }
 
-// Mark `p` (a GC object, not a static); true if it was newly marked
-static bool gc_mark_object(void *p) {
-    if (!p) return false;
+// Mark `p` (a GC object, never a static) and queue it for tracing, unless it
+// is NULL or already marked.
+static void push_object(GC *gc, void *p) {
+    if (!p) return;
     GCObject *obj = header_of(p);
-    if (obj->marked) return false;
+    if (obj->marked) return;
     obj->marked = true;
-    return true;
+
+    if (gc->mark_len == gc->mark_cap) {
+        size_t cap = gc->mark_cap ? gc->mark_cap * 2 : 256;
+        void **stack = realloc(gc->mark_stack, cap * sizeof(void *));
+        if (!stack) {
+            fputs("lyra: out of memory growing the GC mark stack\n", stderr);
+            abort();
+        }
+        gc->mark_stack = stack;
+        gc->mark_cap = cap;
+    }
+    gc->mark_stack[gc->mark_len++] = p;
 }
 
-// Mark a dict/set trie node, its entries and its children. The static empty
-// tries have no header and nothing to trace.
-static void gc_mark_champ(GC *gc, ChampNode *node) {
-    if (!node || champ_is_static(node) || !gc_mark_object(node)) return;
-
-    size_t entry_slots = champ_payload_arity(node) * node->stride;
-    size_t children = champ_node_arity(node);
-    for (size_t i = 0; i < entry_slots; i++) {
-        gc_mark_from_value(gc, node->slots[i]);
-    }
-    for (size_t i = 0; i < children; i++) {
-        gc_mark_champ(gc, node->slots[entry_slots + i]);
-    }
+static void push_value(GC *gc, Value *value) {
+    if (value && !is_static_value(value)) push_object(gc, value);
 }
 
-// Mark all objects reachable from a value
-void gc_mark_from_value(GC *gc, Value *value) {
-    if (!value) return;
+static void push_champ(GC *gc, ChampNode *node) {
+    if (node && !champ_is_static(node)) push_object(gc, node);
+}
 
-    // Mark this value; if already marked, stop recursing
-    if (is_static_value(value) || !gc_mark_object(value)) {
-        return;
-    }
-
-    switch (value->type) {
-        case CONS:
-            if (value->data.as_cons) {
-                gc_mark_object(value->data.as_cons);
-                gc_mark_from_value(gc, value->data.as_cons->car);
-                gc_mark_from_value(gc, value->data.as_cons->cdr);
+// Push every object `obj` directly references. This is the one place that
+// knows each heap type's layout: a new GC object type needs a case here.
+static void gc_trace(GC *gc, void *obj, GCObjectType type) {
+    switch (type) {
+        case GC_VALUE: {
+            Value *value = obj;
+            switch (value->type) {
+                case CONS:
+                    push_object(gc, value->data.as_cons);
+                    break;
+                case STRING:
+                    push_object(gc, value->data.as_string);
+                    break;
+                case SYMBOL:
+                case VARIADIC_MARKER:  // a `*name` parameter; holds its name like a symbol
+                    push_object(gc, value->data.as_symbol);
+                    break;
+                case FUNCTION:
+                case MACRO:
+                    push_object(gc, value->data.as_function);
+                    break;
+                case DICT:
+                case SET:
+                    push_champ(gc, value->data.as_champ);
+                    break;
+                default:
+                    break;
             }
             break;
-        case STRING:
-            gc_mark_object(value->data.as_string);
+        }
+        case GC_CONS: {
+            // cdr first: the stack is LIFO, so the car (usually small) is
+            // traced next and a long list's spine doesn't pile up on the stack.
+            Cons *cons = obj;
+            push_value(gc, cons->cdr);
+            push_value(gc, cons->car);
             break;
-        case SYMBOL:
-        case VARIADIC_MARKER:  // a `*name` parameter; holds its name like a symbol
-            gc_mark_object(value->data.as_symbol);
-            break;
-        case FUNCTION:
-        case MACRO:
-            if (value->data.as_function) {
-                gc_mark_object(value->data.as_function);
-                Callable *callable = value->data.as_function;
-                if (callable->type == DERIVED_FUNCTION || callable->type == DERIVED_MACRO) {
-                    Derived *derived = &callable->data.as_derived;
-                    gc_mark_from_closure(gc, derived->closure);
-                    gc_mark_from_value(gc, derived->params);
-                    gc_mark_from_value(gc, derived->definition);
-                }
+        }
+        case GC_CLOSURE: {
+            Closure *closure = obj;
+            push_object(gc, closure->parent);
+            Variable *var, *tmp;
+            HASH_ITER(hh, closure->defs, var, tmp) {
+                push_object(gc, var);
             }
             break;
-        case DICT:
-        case SET:
-            gc_mark_champ(gc, value->data.as_champ);
+        }
+        case GC_VARIABLE: {
+            Variable *var = obj;
+            push_object(gc, var->key);
+            push_value(gc, var->value);
             break;
-        default:
+        }
+        case GC_CALLABLE: {
+            Callable *callable = obj;
+            if (callable->type == DERIVED_FUNCTION || callable->type == DERIVED_MACRO) {
+                Derived *derived = &callable->data.as_derived;
+                push_object(gc, derived->closure);
+                push_value(gc, derived->params);
+                push_value(gc, derived->definition);
+            }
             break;
+        }
+        case GC_CHAMP_NODE: {
+            ChampNode *node = obj;
+            size_t entry_slots = champ_payload_arity(node) * node->stride;
+            size_t children = champ_node_arity(node);
+            for (size_t i = 0; i < entry_slots; i++) push_value(gc, node->slots[i]);
+            for (size_t i = 0; i < children; i++) push_champ(gc, node->slots[entry_slots + i]);
+            break;
+        }
+        case GC_UTSTRING:
+            break;  // a leaf
     }
 }
 
-// Mark all objects reachable from a closure
-static void gc_mark_from_closure(GC *gc, Closure *closure) {
-    if (!closure) return;
-
-    // Mark this closure; if already marked, stop recursing
-    if (!gc_mark_object(closure)) {
-        return;
+// Mark everything reachable from the root closure
+static void gc_mark(GC *gc, Closure *root) {
+    push_object(gc, root);
+    while (gc->mark_len > 0) {
+        void *obj = gc->mark_stack[--gc->mark_len];        gc_trace(gc, obj, header_of(obj)->type);
     }
-
-    Variable *var, *tmp;
-    HASH_ITER(hh, closure->defs, var, tmp) {
-        gc_mark_object(var);
-        gc_mark_object(var->key);
-        gc_mark_from_value(gc, var->value);
-    }
-
-    gc_mark_from_closure(gc, closure->parent);
 }
 
 // Release an object and its header. Only UT_string owns anything beyond its
@@ -205,7 +237,7 @@ void gc_sweep(GC *gc) {
 // Run a full mark-and-sweep cycle
 void gc_collect(GC *gc, Closure *root_closure) {
     // Mark phase: mark all reachable objects from roots
-    gc_mark_from_closure(gc, root_closure);
+    gc_mark(gc, root_closure);
 
     // Sweep phase: free unmarked objects
     gc_sweep(gc);
@@ -239,4 +271,7 @@ void gc_free_all(GC *gc) {
     }
     gc->head = NULL;
     gc->num_objects = 0;
+    free(gc->mark_stack);
+    gc->mark_stack = NULL;
+    gc->mark_len = gc->mark_cap = 0;
 }

@@ -6,6 +6,7 @@
 #include "../src/closure.h"
 #include "../src/types/value.h"
 #include "../src/types/list.h"
+#include "../src/types/int.h"
 #include "../src/gc.h"
 #include "../src/intrinsics.h"
 #include <stdio.h>
@@ -2527,6 +2528,61 @@ START_TEST(test_panic_session_survives)
 }
 END_TEST
 
+// --- GC marking is iterative: huge and deep structures don't overflow the C stack ---
+
+// A closure key for `name`
+static UT_string *gc_test_name(GC *gc, const char *name) {
+    UT_string *key = gc_alloc_string(gc);
+    utstring_printf(key, "%s", name);
+    return key;
+}
+
+START_TEST(test_gc_long_list)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    Value *list = NIL;
+    for (int i = 0; i < 1000000; i++) list = list_append(&gc, make_int(&gc, i), list);
+    UT_string *key = gc_test_name(&gc, "big");
+    set_var(&gc, closure, key, list);
+
+    gc_collect(&gc, closure);
+    ck_assert_uint_gt(gc.num_objects, 3000000);  // everything survived
+    ck_assert_int_eq(list_length(list), 1000000);
+    ck_assert_int_eq(list_head(list)->data.as_int, 999999);
+
+    // Dropping the only reference frees it all
+    del_var(closure, key);
+    gc_collect(&gc, closure);
+    ck_assert_uint_lt(gc.num_objects, 100);
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_gc_deeply_nested_list)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    // ((( ... (1) ... )))
+    Value *nested = list_append(&gc, make_int(&gc, 1), NIL);
+    for (int i = 0; i < 100000; i++) nested = list_append(&gc, nested, NIL);
+    set_var(&gc, closure, gc_test_name(&gc, "deep"), nested);
+
+    gc_collect(&gc, closure);
+    Value *v = nested;
+    int depth = 0;
+    while (v->type == CONS) {
+        v = list_head(v);
+        depth++;
+    }
+    ck_assert_int_eq(depth, 100001);
+    ck_assert_int_eq(v->data.as_int, 1);
+    gc_free_all(&gc);
+}
+END_TEST
+
 // --- Uninterned symbols: unique and gensym ---
 
 static bool eval_bool(GC *gc, Closure *closure, const char *src) {
@@ -2814,6 +2870,8 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_repr_float_writes_into_string);
     tcase_add_test(tc_core, test_panic_io_failures_are_not_panics);
     tcase_add_test(tc_core, test_panic_session_survives);
+    tcase_add_test(tc_core, test_gc_long_list);
+    tcase_add_test(tc_core, test_gc_deeply_nested_list);
     tcase_add_test(tc_core, test_eval_float);
     tcase_add_test(tc_core, test_eval_string);
     tcase_add_test(tc_core, test_eval_add);
