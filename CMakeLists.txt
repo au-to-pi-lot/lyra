@@ -47,7 +47,10 @@ target_link_libraries(lyra PRIVATE lyra_core replxx::replxx)
 # C++ driver pulls that in (libstdc++/libc++ on Linux/macOS; a no-op on MSVC).
 set_target_properties(lyra PROPERTIES LINKER_LANGUAGE CXX)
 
-if(NOT WIN32)
+if(WIN32)
+    # BCryptGenRandom, for the per-process hash key (src/platform_random.c)
+    target_link_libraries(lyra_core PUBLIC bcrypt)
+else()
     target_link_libraries(lyra_core PUBLIC m)
 endif()
 

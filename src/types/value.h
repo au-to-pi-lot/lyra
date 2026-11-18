@@ -10,6 +10,7 @@ typedef struct Closure Closure;
 typedef struct Variable Variable;
 typedef struct Derived Derived;
 typedef struct Callable Callable;
+typedef struct ChampNode ChampNode;
 
 
 typedef enum ValueType {
@@ -21,6 +22,8 @@ typedef enum ValueType {
     SYMBOL,
     FUNCTION,
     MACRO,
+    DICT,  // persistent hash map (types/champ.h)
+    SET,   // persistent hash set (types/champ.h)
     VARIADIC_MARKER  // Internal marker for variadic parameters (*name)
 } ValueType;
 
@@ -38,7 +41,8 @@ typedef enum GCObjectType {
     GC_CLOSURE,
     GC_CALLABLE,
     GC_VARIABLE,
-    GC_UTSTRING
+    GC_UTSTRING,
+    GC_CHAMP_NODE  // a dict/set trie node (types/champ.h)
 } GCObjectType;
 
 // GC-managed object header
@@ -129,6 +133,7 @@ typedef union ValueData {
     UT_string *as_symbol;
     Callable *as_function;
     Callable *as_macro;
+    ChampNode *as_champ;  // DICT and SET: the trie's root node
 } ValueData;
 
 /// @brief 
@@ -136,3 +141,7 @@ struct Value {
     ValueType type;
     ValueData data;
 };
+
+/// @brief The one equality, shared by `=` and `match` (defined in value.c).
+/// Different types are never equal; see "Intrinsic Functions" in ARCHITECTURE.md.
+bool values_equal(Value *a, Value *b);

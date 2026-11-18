@@ -2,6 +2,7 @@
 #include "types/value.h"
 #include "types/list.h"
 #include "types/symbol.h"
+#include "types/champ.h"
 
 
 static UT_string *repr_internal(Value *val, UT_string *out);
@@ -51,8 +52,39 @@ UT_string *repr_list(Value *list, UT_string *out) {
     return out;
 }
 
+// Dicts and sets print in constructor form, `(dict ('a 1) ('b 2))` and
+// `(set 'a 'b)`, whose parts are evaluated. So symbols and non-empty lists
+// inside them get a quote, and the printed form reads back as an equal value
+// (as long as no dict or set sits inside one of those quoted lists).
+static void repr_as_expression(Value *val, UT_string *out) {
+    if (val->type == SYMBOL || (val->type == CONS && !is_nil(val))) {
+        utstring_printf(out, "'");
+    }
+    repr_internal(val, out);
+}
+
+static void repr_champ_entry(void *ctx, Value *key, Value *value) {
+    UT_string *out = ctx;
+    utstring_printf(out, " ");
+    if (value) {
+        utstring_printf(out, "(");
+        repr_as_expression(key, out);
+        utstring_printf(out, " ");
+        repr_as_expression(value, out);
+        utstring_printf(out, ")");
+    } else {
+        repr_as_expression(key, out);
+    }
+}
+
 static UT_string *repr_internal(Value *val, UT_string *out) {
     switch (val->type) {
+        case DICT:
+        case SET:
+            utstring_printf(out, "(%s", val->type == DICT ? "dict" : "set");
+            champ_foreach(val->data.as_champ, repr_champ_entry, out);
+            utstring_printf(out, ")");
+            break;
         case CONS:
             repr_list(val, out);
             break;
