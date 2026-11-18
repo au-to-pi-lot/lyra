@@ -291,8 +291,8 @@ match lst:
 {1, 2, 3}           # Set (homogeneous elements)
 {a: 1, b: 2}        # Dict (key-value pairs with :)
 {a: 1, 2}           # Syntax error (can't mix)
-(set 1 2 3)         # S-expression forms
-(dict ("a" 1) ("b" 2))
+(set 'a 'b 'c)      # S-expression forms; symbols are the idiomatic keys
+(dict ('a 1) ('b 2) ('c 3))
                     # Keys and set members need total equality: no floats (#17).
                     # Iteration order is not guaranteed (hash seeding against
                     # flooding, speed); ordered dicts are separate. #31
