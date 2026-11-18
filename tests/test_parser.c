@@ -1,5 +1,6 @@
 #include <check.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "../src/parser.h"
 #include "../src/types/value.h"
 #include "../src/types/list.h"
@@ -197,6 +198,34 @@ START_TEST(test_parse_mixed_types)
 }
 END_TEST
 
+START_TEST(test_parse_int_bounds)
+{
+    GC gc;
+    gc_init(&gc);
+    Value *v = parse(&gc, "2147483647");
+    ck_assert_ptr_nonnull(v);
+    ck_assert_int_eq(v->data.as_int, INT_MAX);
+    v = parse(&gc, "-2147483648");
+    ck_assert_ptr_nonnull(v);
+    ck_assert_int_eq(v->data.as_int, INT_MIN);
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_parse_int_out_of_range)
+{
+    GC gc;
+    gc_init(&gc);
+    ck_assert_ptr_null(parse(&gc, "2147483648"));
+    ck_assert_ptr_null(parse(&gc, "-2147483649"));
+    ck_assert_ptr_null(parse(&gc, "99999999999999999999999999"));
+    ck_assert_ptr_null(parse(&gc, "-99999999999999999999999999"));
+    ck_assert_ptr_null(parse(&gc, "(+ 1 2147483648)"));
+    ck_assert_ptr_null(parse(&gc, "'2147483648"));
+    gc_free_all(&gc);
+}
+END_TEST
+
 Suite *parser_suite(void)
 {
     Suite *s;
@@ -219,6 +248,8 @@ Suite *parser_suite(void)
     tcase_add_test(tc_core, test_parse_with_comments);
     tcase_add_test(tc_core, test_parse_list_with_whitespace);
     tcase_add_test(tc_core, test_parse_mixed_types);
+    tcase_add_test(tc_core, test_parse_int_bounds);
+    tcase_add_test(tc_core, test_parse_int_out_of_range);
 
     suite_add_tcase(s, tc_core);
 

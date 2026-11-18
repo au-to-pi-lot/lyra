@@ -11,6 +11,8 @@ Lyra is a high-performance, garbage-collected, functional-first programming lang
 - **Ergonomics matter**: Learning from decades of language design
 - **Native concurrency**: Multi-threaded and concurrent from the ground up
 - **Tasteful syntax**: Convenience features done right
+- **What you reach for first doesn't explode**: The short, obvious name is the total, safe operation. A variant that panics or skips a check gets the longer, explicit name (Rust gets this backwards: `v[i]` panics while `v.get(i)` is the safe one).
+- **Cleanup doesn't depend on the GC**: Files, sockets and locks are released by scope, deterministically, never by finalizers or collection timing (CPython refcounting vs PyPy, Java finalizers)
 
 ## Language Influences
 
@@ -21,7 +23,7 @@ Lyra is a high-performance, garbage-collected, functional-first programming lang
 - Starting implementation base
 
 ### Clojure
-- Spelling: `true`, `false`, `nil`
+- Spelling: `true`, `false`, `nil` (`nil` is provisional; see "Absence: `Option`, not `nil`" under Error Handling)
 - No explicit user-level cons cells
 - Additional bracket syntax for data structures `[]` `{}`
 
@@ -29,10 +31,10 @@ Lyra is a high-performance, garbage-collected, functional-first programming lang
 - Splat syntax (`*args`, `**kwargs`)
 - F-string interpolation
 - `range()` and other standard library naming
+- `dict` (dictionary) as the name for the everyday hash map
 - **Not**: Module system (execution-based imports cause circular dependency issues)
 
 ### Ruby
-- Naming conventions: `hash` over `dict`
 - Object model influences
 
 ### Rust
@@ -86,10 +88,11 @@ let fac := (n) ->
 Lexer emits INDENT/DEDENT tokens that parser treats as block delimiters. This keeps parser simple - whitespace handling is purely lexer concern.
 
 **Whitespace Rules:**
-- All spaces OR all tabs - no mixing within a file
+- Spaces are the preferred style, but tabs are allowed (no Haskell-style tab ban)
+- All spaces OR all tabs - mixing within a file is an error
 - Lexer tracks which style is used, errors on mixed indentation
-- Both camps can use their preference
 - Blank lines and comments ignored for indentation
+- Indentation at the REPL (pasting blocks with blank lines, knowing when an entry is done) is open: #29
 
 **Sugar-First Philosophy:**
 
@@ -155,7 +158,7 @@ Sugar is defined in Lyra itself via `defsyntax`, not hardcoded in C:
 
 Benefits:
 - Sugar defined in the language, not the implementation
-- Users can add custom syntax transformations
+- Users can add custom syntax transformations (*under reconsideration*: per-library dialects make code hard to read and hard for tooling to parse without running it; `defsyntax` may become internal to the prelude/stdlib. #30)
 - Introspectable and modifiable
 - Self-documenting transformations
 
@@ -284,10 +287,15 @@ match lst:
   [] -> base
   [x & xs] -> recur(x, xs)  # O(1) head/tail for recursion
 
-# {} - Sets and maps (distinguished by : syntax)
+# {} - Sets and dicts (inline syntax is provisional and open: #32)
 {1, 2, 3}           # Set (homogeneous elements)
-{a: 1, b: 2}        # Map (key-value pairs with :)
+{a: 1, b: 2}        # Dict (key-value pairs with :)
 {a: 1, 2}           # Syntax error (can't mix)
+(set 'a 'b 'c)      # S-expression forms; symbols are the idiomatic keys
+(dict ('a 1) ('b 2) ('c 3))
+                    # Keys and set members need total equality: no floats (#17).
+                    # Iteration order is not guaranteed (hash seeding against
+                    # flooding, speed); ordered dicts are separate. #31
 
 # Explicit constructors
 (vector 1 2 3)      # Vector - random access, O(1) indexing
@@ -353,6 +361,7 @@ rational(2, 3) / 2.0      # 0.333... (float contaminates)
 
 **Other Syntax Features:**
 - **`=` operator**: Binding/assignment, `==` for comparison
+- **Assignment never creates a binding**: assigning to a name that isn't in scope is an error, never an implicit new variable (Lua's globals-by-typo)
 - **`->` arrow**: Function definitions (single or multi-line)
 - **Range syntax**: `1..n` (Rust/Ruby style)
 - **Destructuring assignment**: Pattern matching in bindings
@@ -401,11 +410,10 @@ Inspired by C# namespaces to avoid Python's circular import problems.
 
 **Iterator Protocol (low-level):**
 ```scheme
-(has-next? iter) -> bool
-(next iter) -> value
+(next iter) -> Option[value]   ; Some(value), or None when exhausted
 ```
 
-Or simpler: return `nil` when exhausted (Lua-style).
+Not a `nil` sentinel (Lua-style): a sentinel can't be told apart from a real element, so iterating a list of lists would stop at the first `[]` once `nil` means the empty list.
 
 **High-Level Abstractions:**
 - `(for [x iterable] ...)` - loop over any iterable
@@ -489,7 +497,7 @@ Immutable values don't need OOP. Traits (Rust) / Type Classes (Haskell) / Protoc
 **Why Traits?**
 - Objects assume identity and mutation
 - Traits: behavior for values without state
-- Retroactive implementation (add traits to existing types)
+- Retroactive implementation (add traits to existing types), within Rust's coherence rules: an implementation must live with the trait or the type, and orphan instances are not allowed. Named implementations are out, since use sites shouldn't have to pick one. #24
 - Clean separation: data (structs) vs behavior (traits)
 
 **Syntax:**
@@ -633,6 +641,8 @@ Lyra uses lightweight green threads (Go-style goroutines) for concurrency, not a
 - Cheap thread spawning (thousands/millions of threads)
 - M:N scheduling (many green threads on N OS threads)
 
+**Structured concurrency:** with green threads at the core, leaked tasks are a real risk. In Go, a goroutine can outlive everything that cares about it, so errors vanish and leaks are found in production. A spawned task's lifetime should be bounded by a scope that waits for it, with cancellation propagating down and failures up (Trio nurseries, Kotlin coroutine scopes). What exactly `spawn` means under this is open: #18. Settle it before the scheduler is built.
+
 **Primitives:**
 - `(spawn expr)` or `(go expr)` - spawn green thread
 - Channels (CSP-style) - thread-safe message passing
@@ -675,9 +685,9 @@ Note: Linear/affine types considered but deferred - redundant with atoms/mutexes
 
 ## Error Handling
 
-**Result Types over Exceptions:**
+**Result Types, No Exceptions:**
 
-Exceptions are procedural and hide control flow. Lyra uses Result types for recoverable errors:
+Lyra has no exceptions. They hide control flow, and checked exceptions in particular don't compose with higher-order functions (Java). Errors that belong in a function's signature are return values. Lyra uses Result types for recoverable errors (propagation sugar and the rest of the design: #23):
 
 ```scheme
 (deftype Result [T E]
@@ -696,6 +706,10 @@ match divide(10, 0):
     Err(e) -> println("Error: " e)
 ```
 
+**Absence: `Option`, not `nil`:**
+
+`nil` exists today because the interpreter is dynamically typed, and it is provisional. Once the static type system lands, `nil` is at most a synonym for the empty list, and "no value" is spelled `Option`. Partial functions return `Option` (or similar) instead of failing or returning a sentinel: `(head [])` is `None`, not a crash. (Haskell's `head`, decision in #19.)
+
 **Panics for Unrecoverable Errors:**
 ```scheme
 panic("Unreachable code reached!")  ; Unwinds, prints stack trace, kills thread/program
@@ -703,7 +717,12 @@ panic("Unreachable code reached!")  ; Unwinds, prints stack trace, kills thread/
 
 **Guidelines:**
 - **Result**: Recoverable errors caller should handle (file not found, parse error, validation)
-- **Panic**: Programmer errors that shouldn't happen (assertion failure, unreachable code, index out of bounds)
+- **Panic**: Programmer errors that shouldn't happen (assertion failure, unreachable code, an explicitly unchecked access that fails)
+- The default spelling of an operation that can fail is the total one, returning `Option`/`Result`. A panicking shortcut, if one exists, gets the longer name (see Core Philosophy).
+
+**Resource Cleanup:**
+
+Resources are released by scope, deterministically, on every exit path including panics. No finalizers. GC timing is never observable through resource behavior.
 
 **Rich Diagnostics (Rust-inspired):**
 
@@ -753,16 +772,26 @@ Reflection is primarily for tooling, not core language features.
 
 ## Strings and Numeric Types
 
-**Strings:**
-- UTF-8 encoded immutable byte arrays
-- Indexing returns code points (not bytes)
-- Separate mutable byte buffers for performance-critical code
+**Strings (Rust's model):**
+- Immutable, always valid UTF-8. Text and raw bytes are distinct types, and converting between them names the encoding explicitly (Python's lesson). Invalid input is an error at the conversion, never a silently corrupted string.
+- **No integer indexing by code point.** On UTF-8 that would be O(n) per access, and code points aren't user-perceived characters anyway ("é" may be one or two; a flag emoji is two).
+- Slicing uses **byte offsets**, which must fall on character boundaries. Searching returns byte offsets, so search-then-slice is O(1).
+- Code points and grapheme clusters are reached by **iteration** (`chars`, `graphemes`), not indexing.
+- **Byte access is first-class**: viewing a string's bytes is cheap and needs no copy, because it matters even for Unicode text (protocols, hashing, parsing).
+- No Python-style variable-width storage (PEP 393) to buy O(1) code-point indexing.
+- Separate mutable byte buffers for performance-critical code.
+- **File paths and OS strings are not text**: they get their own type (Rust's `OsString`, not Python's `surrogateescape`). #25
+- **No ambient locale**: text operations, number parsing and formatting use a fixed default (US English) unless the programmer passes a locale explicitly. #26
+- Slices sharing their parent's buffer can pin a large buffer alive (Java before 7u6); how to handle that is open: #27
 
 ```scheme
 let s := "hello 世界"
-s[0]        ; -> "h" (code point)
-s[6]        ; -> "世" (code point)
-(bytes s)   ; -> byte array if you need bytes
+(slice s 0 5)     ; -> "hello" (byte offsets)
+(slice s 6 9)     ; -> "世" (3 bytes)
+(slice s 6 7)     ; -> error: not a character boundary
+(chars s)         ; -> iterator of code points
+(graphemes s)     ; -> iterator of grapheme clusters
+(bytes s)         ; -> byte view, no copy
 ```
 
 **Numeric Types:**
@@ -777,12 +806,16 @@ Rust-style explicit sizing when performance matters:
 
 Clear types, no implicit conversions, hardware-close when needed.
 
+**Overflow** behaves the same in every build, never undefined (C) or build-dependent (Rust debug vs release). Wraparound is the preferred definition. Exact semantics, and how they relate to `Integer`: #28
+
+**Equality and ordering (Rust's model):** partial and total are separate traits. Floats implement only the partial versions, since IEEE 754's NaN ≠ NaN breaks reflexivity. Anything that needs lawful equality or ordering requires the total trait: set members, map keys, sorting, deduplication. Making partial equality ergonomic, so that floats don't become a constant papercut, is open: #17.
+
 ## Standard Library
 
 **Philosophy: Batteries Included (Python-inspired)**
 
 Core functionality should be in stdlib, not external packages:
-- **Collections**: vectors, hash maps, sets, queues, etc.
+- **Collections**: vectors, dicts, sets, queues, etc.
 - **I/O**: files, streams, buffering
 - **Networking**: TCP, UDP, HTTP client
 - **Datetime**: parsing, formatting, timezones
@@ -914,6 +947,7 @@ Next steps:
 - **Not pure functional**: Pragmatism over dogma
 - **Not minimal**: Syntax sugar is good, actually
 - **Not slow**: Performance is a feature
+- **No first-class continuations**: no `call/cc`, and no user-facing delimited continuations. Rank-and-file programmers don't need them, and they cost performance everywhere
 
 ## Anti-Patterns to Avoid
 
@@ -936,6 +970,33 @@ Learning from others' mistakes:
 - Default string type must be efficient (UTF-8 byte arrays)
 - Don't sacrifice performance for theoretical elegance
 - Linked lists are fine for algorithms, not for text
+
+**Python: Bytes Are Not Text**
+- An encoded string and raw bytes are different things, and the type system should say so
+- Every encoding/decoding step names its encoding. Nothing depends on the ambient locale
+- (See Strings: Rust's model, no code-point indexing, first-class byte access)
+
+**Haskell: Partial Functions in the Standard Library**
+- `head []` shouldn't explode
+- Functions that can't produce a result for some inputs return `Option`/`Result`
+- (See Error Handling: Absence)
+
+**IEEE 754: NaN Breaks Equality**
+- NaN ≠ NaN makes float equality non-reflexive, which silently breaks sets, maps and sorting
+- Separate partial from total equality/ordering, as Rust does, and make the partial case ergonomic (#17)
+
+**Go: Leaked Goroutines**
+- Unstructured `go` lets tasks outlive their purpose. Errors vanish, leaks pile up
+- Structured concurrency: task lifetimes bounded by scope (#18)
+
+**Lua: Assignment Creates Globals**
+- A typo in an assignment silently creates a new global
+- Assignment never creates a binding (see Syntax)
+
+**Java: Checked Exceptions and Finalizers**
+- Checked exceptions don't compose with `map`, folds or any higher-order function
+- Finalizers make cleanup depend on GC timing
+- No exceptions, errors are values. Cleanup is scoped (see Error Handling)
 
 **JavaScript: Standard Library and Naming Consistency**
 - Comprehensive standard library from the start

@@ -282,16 +282,25 @@ static void expect_list(GC *gc, const char *name, Value *v) {
     }
 }
 
+// Two's-complement negation computed in unsigned arithmetic (no signed-overflow
+// UB). Converting unsigned back to int is implementation-defined before C23, but
+// wraps (as we need) on gcc, clang and MSVC.
+static int wrapping_negate(int n) {
+    return (int)(0u - (unsigned int)n);
+}
+
 // Shared by + - * : folds `args` left to right. All operands must be the same
 // numeric type (all ints or all floats); mixing them panics, since Lyra has no
 // implicit conversions (use `int` / `float` to convert explicitly).
 // For - the first argument is the starting value instead of being subtracted.
 // The empty fold is the int identity (0 for +, 1 for *); (-) panics.
 // With a single argument, - negates it.
+// Int arithmetic wraps around in two's complement. It is computed in unsigned
+// arithmetic (well-defined modulo 2^N) so signed-overflow UB never happens.
 typedef enum { ARITH_ADD, ARITH_SUB, ARITH_MUL } ArithOp;
 
 static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
-    int int_result = (op == ARITH_MUL) ? 1 : 0;
+    unsigned int int_result = (op == ARITH_MUL) ? 1u : 0u;
     float float_result = 0.0f;
     Value *first_arg = NULL;  // determines the type of the whole fold
     Value *all_args = args;
@@ -307,7 +316,7 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
             }
             if (op == ARITH_SUB) {
                 if (arg->type == FLOAT) float_result = arg->data.as_float;
-                else int_result = arg->data.as_int;
+                else int_result = (unsigned int)arg->data.as_int;
                 continue;
             }
         } else if (arg->type != first_arg->type) {
@@ -323,7 +332,7 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
                 case ARITH_MUL: float_result *= operand; break;
             }
         } else {
-            int operand = arg->data.as_int;
+            unsigned int operand = (unsigned int)arg->data.as_int;
             switch (op) {
                 case ARITH_ADD: int_result += operand; break;
                 case ARITH_SUB: int_result -= operand; break;
@@ -338,12 +347,11 @@ static Value *arith_fold(GC *gc, const char *name, ArithOp op, Value *args) {
     if (op == ARITH_SUB && is_nil(list_tail(all_args))) {
         // (- x) negates
         if (first_arg->type == FLOAT) return make_float(gc, -float_result);
-        if (int_result == INT_MIN) lyra_panic("integer overflow in -");
-        return make_int(gc, -int_result);
+        return make_int(gc, wrapping_negate((int)int_result));
     }
 
     if (first_arg && first_arg->type == FLOAT) return make_float(gc, float_result);
-    return make_int(gc, int_result);
+    return make_int(gc, (int)int_result);
 }
 
 Value *intrinsic_add(GC *gc, Closure *closure, Value *args) {
@@ -417,12 +425,20 @@ Value *intrinsic_divmod(GC *gc, Closure *closure, Value *args) {
     if (divisor->data.as_int == 0) {
         lyra_panic("division by zero");
     }
-    if (dividend->data.as_int == INT_MIN && divisor->data.as_int == -1) {
-        lyra_panic("integer overflow in divmod");
-    }
 
-    int quot = dividend->data.as_int / divisor->data.as_int;
-    int rem = dividend->data.as_int % divisor->data.as_int;
+    int quot;
+    int rem;
+    if (divisor->data.as_int == -1) {
+        // INT_MIN / -1 and INT_MIN % -1 are UB in C (and trap on x86). Like
+        // + - *, the quotient wraps (INT_MIN / -1 is INT_MIN); remainder is 0.
+        quot = wrapping_negate(dividend->data.as_int);
+        rem = 0;
+    } else {
+        quot = dividend->data.as_int / divisor->data.as_int;
+        rem = dividend->data.as_int % divisor->data.as_int;
+    }
+    // The floor adjustment below cannot overflow: divisor != -1 here, so quot
+    // is far from INT_MIN, and rem and divisor have opposite signs when it runs.
     // C truncates toward zero; adjust to floor (Python style): the remainder
     // takes the divisor's sign.
     if (rem != 0 && ((rem < 0) != (divisor->data.as_int < 0))) {
