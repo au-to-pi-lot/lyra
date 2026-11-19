@@ -128,6 +128,10 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function(gc, closure, "from-bytes", &intrinsic_from_bytes);
     define_intrinsic_function(gc, closure, "join", &intrinsic_join);
 
+    // Whole-file I/O
+    define_intrinsic_function(gc, closure, "read-file", &intrinsic_read_file);
+    define_intrinsic_function(gc, closure, "write-file", &intrinsic_write_file);
+
     // Directory operations
     define_intrinsic_function(gc, closure, "list-directory", &intrinsic_list_directory);
 

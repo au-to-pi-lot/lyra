@@ -33,7 +33,7 @@ CFLAGS = -Wall -Wextra -std=c11 -g -DDEBUG_MACRO -DDEBUG_QUASIQUOTE
 - REPL line editing uses **replxx** (`vcpkg.json`), not libedit/ncurses - libedit has no real MSVC port. `src/main.c`'s `repl()` uses `replxx_init`/`replxx_input`/`replxx_history_add`/`replxx_end`.
 - `isatty`/`STDIN_FILENO` are aliased to `_isatty`/`_fileno(stdin)` under `_WIN32` in `src/main.c`.
 - **Gotcha**: `types/value.h`'s `ValueType` enum has constants literally named `INT`, `FLOAT`, `BOOLEAN` - these collide with `windows.h`'s typedefs of the same names (`minwindef.h`/`winnt.h`). Any file that includes `windows.h` must NOT also see `value.h` in the same translation unit, or MSVC fails with a cascade of redefinition errors starting at `minwindef.h`. (See [CLAUDE.md](CLAUDE.md)'s "Cross-platform code" pattern.)
-  - This is why directory listing (used by the module system's `list-directory` intrinsic) is isolated in `src/platform_dir.c`/`.h`: a tiny platform-neutral C API (`platform_list_directory`/`platform_free_directory_listing`) that hides `windows.h` (Win32 `FindFirstFile`/`FindNextFile`) vs `dirent.h` (POSIX `opendir`/`readdir`) behind a plain `char **` interface. `src/intrinsics.c` only sees the neutral header.
+  - This is why directory listing (used by the module system's `list-directory` intrinsic) is isolated in `src/platform_dir.c`/`.h`: a tiny platform-neutral C API (`platform_list_directory`/`platform_free_directory_listing`) that hides `windows.h` (Win32 `FindFirstFile`/`FindNextFile`) vs `dirent.h` (POSIX `opendir`/`readdir`) behind a plain `char **` interface. `src/intrinsics.c` only sees the neutral header. File opening for `read-file`/`write-file` follows the same pattern in `src/platform_file.c`/`.h` (`platform_fopen_utf8`).
 - `find_path(UTHASH_INCLUDE_DIR ...)` is required in `CMakeLists.txt` because uthash's vcpkg port is header-only and ships no CMake config.
 - `check`'s vcpkg CMake config exports `Check::check` (static) or `Check::checkShared` (shared) - not lowercase `check::check`. `CMakeLists.txt` uses the generator-expression form the port itself recommends: `$<IF:$<TARGET_EXISTS:Check::check>,Check::check,Check::checkShared>`.
 - `replxx::replxx`'s exported target links `Threads::Threads`, so `find_package(Threads REQUIRED)` must run before `find_package(replxx CONFIG REQUIRED)`.
@@ -96,7 +96,7 @@ Lyra's error model (DESIGN.md "Error Handling"): **panic** for programmer errors
   - File and `-c` mode (`run_source`): prints `panic: <message>` to stderr and exits with `panic_exit_status()`: 1 (`PANIC_DEFAULT_STATUS`) unless the panic came from `lyra_panic_with_status` / `panic-with-status`
   - `panic_report()` flushes stdout before writing to stderr so output ordering is sane
 - **What panics**: undefined variables (`undefined variable: \`x\``), non-callable call heads (`not callable: 5`), arity/type errors in intrinsics, malformed `lambda` parameter lists, `define-macro` on a non-function, `match` with no matching clause or with `,@` in a pattern, `eval-string` parse errors, and explicit `(panic ...)`
-- **What doesn't (yet)**: I/O failures (`load-file` can't open a file, `list-directory` can't open a directory) still print and return `nil`; they're marked `// TODO: result` and will become err results. `get-var` on an unbound symbol returns `nil` by design (the module system uses it as a "defined?" check).
+- **What doesn't (yet)**: I/O failures (`load-file` can't open a file, `list-directory` can't open a directory) still print and return `nil`; they're marked `// TODO: result` and will become err results. `read-file`/`write-file` fail the same way but silently (`nil`), by design of that provisional API. `get-var` on an unbound symbol returns `nil` by design (the module system uses it as a "defined?" check).
 - **Bad arguments** (message style `<name> expects ..., but got <repr>`): wrong arity almost everywhere (`car`, `cons`, `=`, `<`, `divmod`, `apply`, the `is-*` predicates, `if`, `define`, `quote`, ...); non-numbers to `+ - * / < <= > >=`; mixed int/float operands to `+ - * / < <= > >=` (`+ cannot combine 1 and 2.5: mixed int and float`); `int`/`truncate`/`floor`/`ceiling`/`round`/`float` of a non-number, and float to int conversions of NaN/infinity/out-of-range floats; `(-)` and `(/)` with no arguments; non-lists to `car`/`cdr`/`cons`/`apply`; non-integers to `divmod`; `division by zero` from `/` and `divmod`; calling a derived function or macro with the wrong number of arguments (`wrong number of arguments: expected 2, but got 1`, or `expected at least N` with a variadic) and destructuring a non-list
 - **Deliberately not panics**: `(car nil)`/`(cdr nil)` are `nil`; `=` across different types (including `(= 1 1.0)`) is `false`. `()` evaluates to `nil` (self-evaluating, so `(())` panics with `not callable: ()`). There is no implicit int/float conversion anywhere; use `int`/`float`
 - **GC safety**: collection runs only at top-level safe points (after a REPL expression / file / `-c` run), never mid-evaluation, so a panic can't interrupt a collection. Whatever the aborted evaluation allocated stays registered and is swept by the next `gc_collect` if unreachable. `gc_alloc_cons` initializes `car`/`cdr` to `NIL`, so a half-built list never holds garbage pointers
@@ -267,6 +267,12 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 
 **File I/O**:
 - `load-file` - Read file contents as string: `(load-file "module.lyra")` → file contents as a string
+- `read-file` - Whole-file read: `(read-file "path")` -> the file's contents as a string, or `nil` on any failure (can't open, read error). `nil` is unambiguous because contents are always a string. Wrong argument types panic
+- `write-file` - Whole-file write: `(write-file "path" "text")` creates or truncates the file and returns `true`, or `nil` if it couldn't be opened or fully written. Prints nothing on failure; the caller checks the result
+  - **Provisional**: just enough for the self-hosted compiler (#40). Contents and paths are assumed UTF-8 with no validation, and it is expected to be replaced by a streaming API with a text/bytes split, path safety and encoding handling
+  - Files are opened in binary mode, so bytes round-trip exactly (Windows doesn't translate CRLF) and embedded NULs survive in the string's length-tracked buffer (though most string intrinsics use the C-string view and would stop at one)
+  - Paths go through `platform_fopen_utf8` ([src/platform_file.h](src/platform_file.h)/`.c`), which uses `_wfopen` + `MultiByteToWideChar(CP_UTF8)` on Windows (plain `fopen` would read the path in the ANSI code page) and `fopen` elsewhere; same `windows.h` isolation as `platform_dir`. An invalid UTF-8 path fails (`nil`) on Windows
+  - `read-file` reads in a loop until EOF rather than trusting `ftell`
 - `eval-string` - Evaluate string as code: `(eval-string "(+ 1 2)")` → `3`
   - Evaluates in **current closure** - definitions affect caller's scope
 
@@ -515,7 +521,7 @@ The Lyra interpreter supports multiple modes:
 
 ## Testing
 - **Test Coverage**: 150 tests across 4 suites, all passing ✅ (including 15 `match` pattern-matching tests)
-  - `test_eval.c`: 86 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
+  - `test_eval.c`: 91 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
   - `test_parser.c`: 16 tests covering lexing and parsing (including integer literal bounds)
   - `test_string.c`: 18 tests for the string intrinsics: `count`, `byte`, `slice` (including UTF-8 boundary rejection), `find`, `starts-with?`/`ends-with?`, `parse-int` bounds, `bytes`/`from-bytes` round trips and errors, `join`, bytewise ordering, and NUL handling in equality, hashing, `string`, `write`, `repr`/reader round trip, `symbol` and GC

@@ -80,6 +80,10 @@ Value *intrinsic_float(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_string(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_symbol(GC *gc, Closure *closure, Value *args);
 
+// Whole-file I/O
+Value *intrinsic_read_file(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_write_file(GC *gc, Closure *closure, Value *args);
+
 // Module system
 Value *intrinsic_module(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_list_directory(GC *gc, Closure *closure, Value *args);

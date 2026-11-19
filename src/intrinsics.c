@@ -18,6 +18,7 @@
 #include <string.h>
 #include <limits.h>
 #include "platform_dir.h"
+#include "platform_file.h"
 #include "panic.h"
 
 // Enable debug output with -DDEBUG_LAMBDA
@@ -730,6 +731,89 @@ Value *intrinsic_load_file(GC *gc, Closure *closure, Value *args) {
     free(buffer);
 
     return make_string(gc, contents);
+}
+
+// Whole-file I/O. Provisional: contents and paths are assumed to be UTF-8 with
+// no validation, files are opened in binary mode so bytes round-trip exactly,
+// and any failure returns nil (unambiguous, since contents are always a
+// string). Expected to be replaced by a streaming API.
+Value *intrinsic_read_file(GC *gc, Closure *closure, Value *args) {
+    (void)closure;
+    // (read-file "path") => contents as a string, or nil on failure
+    expect_arity("read-file", args, 1);
+    Value *path_val = list_head(args);
+    if (path_val->type != STRING) {
+        lyra_panic("read-file requires a string path");
+    }
+
+    FILE *file = platform_fopen_utf8(utstring_body(path_val->data.as_string), "rb");
+    if (!file) {
+        return NIL;
+    }
+
+    // Read until EOF rather than trusting ftell, which is meaningless on
+    // non-regular files (pipes, devices).
+    size_t capacity = 4096;
+    size_t length = 0;
+    char *buffer = malloc(capacity);
+    bool ok = buffer != NULL;
+    while (ok) {
+        if (length == capacity) {
+            char *grown = realloc(buffer, capacity * 2);
+            if (!grown) {
+                ok = false;
+                break;
+            }
+            buffer = grown;
+            capacity *= 2;
+        }
+        size_t n = fread(buffer + length, 1, capacity - length, file);
+        length += n;
+        if (n == 0) {
+            break;
+        }
+    }
+    if (ferror(file)) {
+        ok = false;
+    }
+    fclose(file);
+    if (!ok) {
+        free(buffer);
+        return NIL;
+    }
+
+    // bincpy keeps the length, so embedded NUL bytes survive in the string.
+    UT_string *contents = gc_alloc_string(gc);
+    utstring_bincpy(contents, buffer, length);
+    free(buffer);
+    return make_string(gc, contents);
+}
+
+Value *intrinsic_write_file(GC *gc, Closure *closure, Value *args) {
+    (void)gc;
+    (void)closure;
+    // (write-file "path" "contents") => true on success, nil on failure
+    expect_arity("write-file", args, 2);
+    Value *path_val = list_index(args, 0);
+    Value *contents_val = list_index(args, 1);
+    if (path_val->type != STRING) {
+        lyra_panic("write-file requires a string path");
+    }
+    if (contents_val->type != STRING) {
+        lyra_panic("write-file requires a string to write");
+    }
+
+    FILE *file = platform_fopen_utf8(utstring_body(path_val->data.as_string), "wb");
+    if (!file) {
+        return NIL;
+    }
+    UT_string *contents = contents_val->data.as_string;
+    size_t len = utstring_len(contents);
+    bool ok = fwrite(utstring_body(contents), 1, len, file) == len;
+    if (fclose(file) != 0) {
+        ok = false;
+    }
+    return ok ? TRUE : NIL;
 }
 
 Value *intrinsic_eval_string(GC *gc, Closure *closure, Value *args) {

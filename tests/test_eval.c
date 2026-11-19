@@ -7,13 +7,17 @@
 #include "../src/types/value.h"
 #include "../src/types/list.h"
 #include "../src/types/int.h"
+#include "../src/types/boolean.h"
 #include "../src/gc.h"
 #include "../src/intrinsics.h"
 #include <stdio.h>
 #include "../src/call.h"
 #include "../src/repr.h"
 #include "../src/panic.h"
+#include "../src/platform_file.h"
 #include <stdbool.h>
+#include <string.h>
+#include <wchar.h>
 
 // Helper to parse and evaluate
 static Value* eval_string(GC *gc, Closure *closure, const char *input) {
@@ -2449,6 +2453,149 @@ START_TEST(test_repr_float_writes_into_string)
 }
 END_TEST
 
+// Whole-file I/O. Files live in the working directory under names unique to
+// this test and are removed afterwards. The non-ASCII file name is spelled
+// with escapes so the test doesn't depend on the compiler's source encoding.
+#define IO_TEST_NAME "lyra_io_test_file.tmp"
+#define IO_TEST_UTF8_NAME "lyra_io_t\xc3\xa9st_\xe2\x82\xac.tmp"
+
+static const char *eval_str_of(GC *gc, Closure *closure, const char *src) {
+    Value *v = eval_string(gc, closure, src);
+    return (v && v->type == STRING) ? utstring_body(v->data.as_string) : NULL;
+}
+
+START_TEST(test_file_io_round_trip)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    Value *r = eval_string(&gc, closure, "(write-file \"" IO_TEST_NAME "\" \"hello\\nworld\")");
+    ck_assert(r == TRUE);
+    ck_assert_str_eq(eval_str_of(&gc, closure, "(read-file \"" IO_TEST_NAME "\")"), "hello\nworld");
+
+    // Writing again truncates
+    eval_string(&gc, closure, "(write-file \"" IO_TEST_NAME "\" \"x\")");
+    ck_assert_str_eq(eval_str_of(&gc, closure, "(read-file \"" IO_TEST_NAME "\")"), "x");
+
+    remove(IO_TEST_NAME);
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_file_io_missing_and_empty)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    Value *r = eval_string(&gc, closure, "(read-file \"no/such/file.txt\")");
+    ck_assert(r != NULL && is_nil(r));
+
+    eval_string(&gc, closure, "(write-file \"" IO_TEST_NAME "\" \"\")");
+    const char *s = eval_str_of(&gc, closure, "(read-file \"" IO_TEST_NAME "\")");
+    ck_assert_ptr_nonnull(s);
+    ck_assert_str_eq(s, "");
+
+    remove(IO_TEST_NAME);
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_file_io_binary_mode)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // CRLF and embedded NUL bytes must survive in both directions.
+    const char raw[] = "a\r\nb\0c\r\n";
+    const size_t raw_len = sizeof(raw) - 1;
+    FILE *f = fopen(IO_TEST_NAME, "wb");
+    ck_assert_ptr_nonnull(f);
+    fwrite(raw, 1, raw_len, f);
+    fclose(f);
+
+    Value *v = eval_string(&gc, closure, "(read-file \"" IO_TEST_NAME "\")");
+    ck_assert(v != NULL && v->type == STRING);
+    ck_assert_uint_eq(utstring_len(v->data.as_string), raw_len);
+    ck_assert(memcmp(utstring_body(v->data.as_string), raw, raw_len) == 0);
+
+    // Write it back out and compare the bytes on disk.
+    eval_string(&gc, closure, "(write-file \"" IO_TEST_NAME "\" (read-file \"" IO_TEST_NAME "\"))");
+    char back[32];
+    f = fopen(IO_TEST_NAME, "rb");
+    ck_assert_ptr_nonnull(f);
+    size_t n = fread(back, 1, sizeof(back), f);
+    fclose(f);
+    ck_assert_uint_eq(n, raw_len);
+    ck_assert(memcmp(back, raw, n) == 0);
+
+    // A CRLF written from Lyra source stays CRLF on disk
+    eval_string(&gc, closure, "(write-file \"" IO_TEST_NAME "\" \"a\\r\\nb\")");
+    f = fopen(IO_TEST_NAME, "rb");
+    ck_assert_ptr_nonnull(f);
+    n = fread(back, 1, sizeof(back), f);
+    fclose(f);
+    ck_assert_uint_eq(n, 4);
+    ck_assert(memcmp(back, "a\r\nb", 4) == 0);
+
+    remove(IO_TEST_NAME);
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_file_io_utf8_path_and_contents)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    Value *r = eval_string(&gc, closure,
+        "(write-file \"" IO_TEST_UTF8_NAME "\" \"caf\xc3\xa9 \xe2\x82\xac\")");
+    ck_assert(r == TRUE);
+    ck_assert_str_eq(eval_str_of(&gc, closure, "(read-file \"" IO_TEST_UTF8_NAME "\")"),
+                     "caf\xc3\xa9 \xe2\x82\xac");
+
+    // On Windows plain fopen would have created a differently named file;
+    // reaching it through the UTF-8 helper confirms the name is what we wrote.
+    FILE *f = platform_fopen_utf8(IO_TEST_UTF8_NAME, "rb");
+    ck_assert_ptr_nonnull(f);
+    fclose(f);
+#ifdef _WIN32
+    _wremove(L"lyra_io_t\x00e9st_\x20ac.tmp");
+#else
+    remove(IO_TEST_UTF8_NAME);
+#endif
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_file_io_failures_and_errors)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+
+    // Writing into a directory that doesn't exist fails with nil, no panic
+    Value *result = NULL;
+    ck_assert(!eval_panics(&gc, closure, "(write-file \"no/such/dir/f.txt\" \"x\")", &result));
+    ck_assert(result != NULL && is_nil(result));
+
+    // Wrong argument types are programmer errors
+    ck_assert(eval_panics(&gc, closure, "(read-file 5)", &result));
+    ck_assert(eval_panics(&gc, closure, "(write-file \"" IO_TEST_NAME "\" 5)", &result));
+    ck_assert(eval_panics(&gc, closure, "(write-file 5 \"x\")", &result));
+
+    gc_free_all(&gc);
+}
+END_TEST
+
 START_TEST(test_panic_io_failures_are_not_panics)
 {
     GC gc;
@@ -2894,6 +3041,11 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_loud_call_arity);
     tcase_add_test(tc_core, test_repr_float_writes_into_string);
     tcase_add_test(tc_core, test_panic_io_failures_are_not_panics);
+    tcase_add_test(tc_core, test_file_io_round_trip);
+    tcase_add_test(tc_core, test_file_io_missing_and_empty);
+    tcase_add_test(tc_core, test_file_io_binary_mode);
+    tcase_add_test(tc_core, test_file_io_utf8_path_and_contents);
+    tcase_add_test(tc_core, test_file_io_failures_and_errors);
     tcase_add_test(tc_core, test_panic_session_survives);
     tcase_add_test(tc_core, test_gc_long_list);
     tcase_add_test(tc_core, test_gc_deeply_nested_list);
