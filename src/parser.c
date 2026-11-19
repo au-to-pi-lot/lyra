@@ -95,8 +95,13 @@ static Token lex_string(Lexer* lex) {
                 case '\\': utstring_printf(buffer, "\\"); break;
                 case '"': utstring_printf(buffer, "\""); break;
                 case '0': utstring_bincpy(buffer, "", 1); break;  // one NUL byte (the "" literal's terminator)
-                // Unknown escape: keep both characters, as the text says
-                default: utstring_printf(buffer, "\\%c", next); break;
+                default:
+                    // Unknown escapes are errors, so a meaning can be added
+                    // later without breaking existing programs.
+                    fprintf(stderr, "Unknown escape sequence in string literal: \\%c (line %zu)\n",
+                            next, lex->line);
+                    utstring_free(buffer);
+                    return make_token(TOKEN_ERROR, NULL, start_line, start_col);
             }
         } else {
             utstring_printf(buffer, "%c", c);
@@ -259,6 +264,9 @@ static Value* parse_atom(GC *gc, Token* tok) {
             utstring_concat(sym, tok->value);
             val = make_symbol(gc, sym);
             break;
+
+        case TOKEN_ERROR:
+            break;  // the lexer already reported it
 
         default:
             fprintf(stderr, "Unexpected token type in parse_atom\n");

@@ -1,5 +1,6 @@
 #include <check.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 #include "../src/parser.h"
 #include "../src/types/value.h"
@@ -62,6 +63,31 @@ START_TEST(test_parse_string_with_escapes)
     ck_assert_ptr_nonnull(result);
     ck_assert_int_eq(result->type, STRING);
     ck_assert_str_eq(utstring_body(result->data.as_string), "hello\nworld\t!");
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_parse_all_known_escapes)
+{
+    GC gc;
+    gc_init(&gc);
+    Value *result = parse(&gc, "\"\\n\\t\\r\\\\\\\"\\0x\"");
+    ck_assert_ptr_nonnull(result);
+    ck_assert_int_eq(result->type, STRING);
+    ck_assert_uint_eq(utstring_len(result->data.as_string), 7);
+    ck_assert(memcmp(utstring_body(result->data.as_string), "\n\t\r\\\"\0x", 7) == 0);
+    gc_free_all(&gc);
+}
+END_TEST
+
+START_TEST(test_parse_unknown_escape_is_error)
+{
+    GC gc;
+    gc_init(&gc);
+    ck_assert_ptr_null(parse(&gc, "\"\\q\""));
+    ck_assert_ptr_null(parse(&gc, "\"ok \\x41\""));
+    ck_assert_ptr_null(parse(&gc, "(print \"a\\qb\")"));
+    ck_assert_ptr_null(parse(&gc, "'(1 \"\\e\")"));
     gc_free_all(&gc);
 }
 END_TEST
@@ -239,6 +265,8 @@ Suite *parser_suite(void)
     tcase_add_test(tc_core, test_parse_float);
     tcase_add_test(tc_core, test_parse_string);
     tcase_add_test(tc_core, test_parse_string_with_escapes);
+    tcase_add_test(tc_core, test_parse_all_known_escapes);
+    tcase_add_test(tc_core, test_parse_unknown_escape_is_error);
     tcase_add_test(tc_core, test_parse_symbol);
     tcase_add_test(tc_core, test_parse_operator_symbol);
     tcase_add_test(tc_core, test_parse_empty_list);

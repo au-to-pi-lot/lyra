@@ -226,7 +226,7 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `bytes` / `from-bytes` - `(bytes s)` → list of ints; `(from-bytes list)` → string. A list element that isn't an int in 0-255 panics
 - `join` - `(join list-of-strings separator)`: sizes the result first and fills it in one pass, so building big output is linear, not O(n^2) like repeated `string`. A non-string element panics
 - `<`, `<=`, `>`, `>=` also accept two strings, compared **bytewise** (`memcmp` over the common prefix, then the shorter string is smaller). That is not a locale or Unicode collation order. Mixing a string and a number panics as before
-- NUL-safe throughout: `string` concatenation, `print`/`write` (`fwrite` of the full length) and `repr` keep every byte. `repr` prints a NUL as `\0`, and the reader's string literals accept `\0`, so `repr` round-trips. The reader's escapes are `\n \t \r \\ \" \0`; any other `\x` is kept as the two characters. `(symbol s)` panics if `s` contains a NUL, because symbol names are C strings (and an uninterned key is `name NUL serial`). Still truncating: `panic` messages (formatted through `%s`)
+- NUL-safe throughout: `string` concatenation, `print`/`write` (`fwrite` of the full length) and `repr` keep every byte. `repr` prints a NUL as `\0`, and the reader's string literals accept `\0`, so `repr` round-trips. The reader's escapes are `\n \t \r \\ \" \0`; any other `\x` is a parse error (message on stderr naming the escape, `NULL` result, like an out-of-range integer literal), so a meaning can be added later without breaking programs. `(symbol s)` panics if `s` contains a NUL, because symbol names are C strings (and an uninterned key is `name NUL serial`). Still truncating: `panic` messages (formatted through `%s`)
 
 **Type Constructors** (polymorphic):
 - `string` - Convert to string or concatenate
@@ -523,7 +523,7 @@ The Lyra interpreter supports multiple modes:
 - **Test Coverage**: 150 tests across 4 suites, all passing ✅ (including 15 `match` pattern-matching tests)
   - `test_eval.c`: 91 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
-  - `test_parser.c`: 16 tests covering lexing and parsing (including integer literal bounds)
+  - `test_parser.c`: 18 tests covering lexing and parsing (including integer literal bounds)
   - `test_string.c`: 18 tests for the string intrinsics: `count`, `byte`, `slice` (including UTF-8 boundary rejection), `find`, `starts-with?`/`ends-with?`, `parse-int` bounds, `bytes`/`from-bytes` round trips and errors, `join`, bytewise ordering, and NUL handling in equality, hashing, `string`, `write`, `repr`/reader round trip, `symbol` and GC
   - `test_dict.c`: 23 tests for dicts, sets and hashing: SipHash-1-3 reference vectors and streaming, equal-values-hash-equal, trie persistence, random insert/remove workloads checked against an array and `champ_validate` (normal hash, all-colliding hash, few-bucket hash, deep-path hashes), canonical equality across insertion orders, `missing` vs `nil`, unhashable keys, printing round trips, set algebra, 3000-key dicts, and GC survival (including collision nodes)
   - GC tests include a collection over a 1M-element list and a 100k-deep nested list (`test_eval.c`), which overflowed the recursive marker

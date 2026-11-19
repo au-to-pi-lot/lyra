@@ -462,8 +462,8 @@ START_TEST(test_nul_repr_roundtrip)
     // The reader accepts \0 in source
     ck_assert_int_eq(run_int(&in, "(count \"a\\0b\")"), 3);
     ck_assert_int_eq(run_int(&in, "(byte \"a\\0b\" 1)"), 0);
-    // Unknown escapes keep both characters
-    assert_string(&in, "\"\\q\"", "\\q", 2);
+    // Unknown escapes are parse errors
+    ck_assert_ptr_null(parse(&in.gc, "\"\\q\""));
     interp_free(&in);
 }
 END_TEST
