@@ -417,6 +417,66 @@ START_TEST(test_string_equality_with_nul)
 }
 END_TEST
 
+// ---- NUL safety in string, write, repr, the reader and symbol ------------------
+
+START_TEST(test_nul_in_concat_and_conversion)
+{
+    Interp in; interp_init(&in);
+    assert_string(&in, "(string \"a\" (from-bytes '(0)) \"b\")", "a\0b", 3);
+    assert_string(&in, "(string (from-bytes '(97 0 98)))", "a\0b", 3);
+    assert_string(&in, "(string (from-bytes '(0 0)) (from-bytes '(0)))", "\0\0\0", 3);
+    interp_free(&in);
+}
+END_TEST
+
+START_TEST(test_nul_in_write)
+{
+    Interp in; interp_init(&in);
+    FILE *f = tmpfile();
+    ck_assert_ptr_nonnull(f);
+    intrinsic_set_print_stream(f);
+    run(&in, "(write \"a\" (from-bytes '(0 98)) \"c\")");
+    run(&in, "(print (from-bytes '(0)))");
+    intrinsic_set_print_stream(NULL);
+    rewind(f);
+    char buf[32];
+    size_t n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    ck_assert_uint_eq(n, 6);
+    ck_assert(memcmp(buf, "a\0bc\0\n", 6) == 0);
+    interp_free(&in);
+}
+END_TEST
+
+START_TEST(test_nul_repr_roundtrip)
+{
+    Interp in; interp_init(&in);
+    Value *s = run(&in, "(from-bytes '(97 0 98 34 92 10 9 13 0 49))");
+    UT_string *text = repr(&in.gc, s);
+    ck_assert_str_eq(utstring_body(text), "\"a\\0b\\\"\\\\\\n\\t\\r\\01\"");
+    Value *back = eval_s_expr(&in.gc, in.global, parse(&in.gc, utstring_body(text)));
+    ck_assert(values_equal(s, back));
+    // Non-ASCII bytes pass through unchanged
+    Value *u = run(&in, "\"h\xc3\xa9\"");
+    ck_assert(values_equal(u, eval_s_expr(&in.gc, in.global, parse(&in.gc, utstring_body(repr(&in.gc, u))))));
+    // The reader accepts \0 in source
+    ck_assert_int_eq(run_int(&in, "(count \"a\\0b\")"), 3);
+    ck_assert_int_eq(run_int(&in, "(byte \"a\\0b\" 1)"), 0);
+    // Unknown escapes keep both characters
+    assert_string(&in, "\"\\q\"", "\\q", 2);
+    interp_free(&in);
+}
+END_TEST
+
+START_TEST(test_symbol_rejects_nul)
+{
+    Interp in; interp_init(&in);
+    ck_assert_panics(&in, "(symbol (from-bytes '(97 0 98)))", "symbol: a symbol name cannot contain a NUL byte");
+    ck_assert(run_true(&in, "(= (symbol \"ab\") 'ab)"));
+    interp_free(&in);
+}
+END_TEST
+
 // ---- GC ----------------------------------------------------------------------
 
 START_TEST(test_strings_survive_gc)
@@ -448,6 +508,10 @@ static Suite *string_suite(void) {
     tcase_add_test(tc, test_join_large);
     tcase_add_test(tc, test_string_ordering);
     tcase_add_test(tc, test_string_equality_with_nul);
+    tcase_add_test(tc, test_nul_in_concat_and_conversion);
+    tcase_add_test(tc, test_nul_in_write);
+    tcase_add_test(tc, test_nul_repr_roundtrip);
+    tcase_add_test(tc, test_symbol_rejects_nul);
     tcase_add_test(tc, test_strings_survive_gc);
     suite_add_tcase(s, tc);
     return s;

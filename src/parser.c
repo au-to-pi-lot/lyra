@@ -94,7 +94,9 @@ static Token lex_string(Lexer* lex) {
                 case 'r': utstring_printf(buffer, "\r"); break;
                 case '\\': utstring_printf(buffer, "\\"); break;
                 case '"': utstring_printf(buffer, "\""); break;
-                default: utstring_printf(buffer, "%c", c); break;
+                case '0': utstring_bincpy(buffer, "", 1); break;  // one NUL byte (the "" literal's terminator)
+                // Unknown escape: keep both characters, as the text says
+                default: utstring_printf(buffer, "\\%c", next); break;
             }
         } else {
             utstring_printf(buffer, "%c", c);

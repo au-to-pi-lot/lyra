@@ -28,8 +28,11 @@ UT_string *repr_string(UT_string *s, UT_string *out) {
             case '"':
                 utstring_printf(out, "\\\"");
                 break;
+            case '\0':
+                utstring_printf(out, "\\0");
+                break;
             default:
-                utstring_printf(out, "%c", c);
+                utstring_bincpy(out, &c, 1);
                 break;
         }
     }
