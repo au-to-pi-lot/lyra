@@ -219,8 +219,22 @@ static void gc_free_object(GCObject *obj) {
     free(obj);
 }
 
+// Release the uthash table (buckets, not entries) of every closure that is
+// unmarked, or of every closure if `all`. HASH_CLEAR reads the first Variable
+// to find the table, and Variables are separate GC objects that can be swept
+// before their closure, so this must run while every object is still alive.
+static void release_closure_tables(GC *gc, bool all) {
+    for (GCObject *obj = gc->head; obj; obj = obj->next) {
+        if (obj->type == GC_CLOSURE && (all || !obj->marked)) {
+            Closure *closure = (Closure *)(obj + 1);
+            HASH_CLEAR(hh, closure->defs);
+        }
+    }
+}
+
 // Sweep phase: free all unmarked objects
 void gc_sweep(GC *gc) {
+    release_closure_tables(gc, false);
     GCObject **obj_ptr = &gc->head;
     while (*obj_ptr) {
         GCObject *obj = *obj_ptr;
@@ -253,16 +267,8 @@ void gc_collect(GC *gc, Closure *root_closure) {
 
 // Clean up all GC-managed memory
 void gc_free_all(GC *gc) {
-    // First pass: clean up hash tables in closures (uthash internal memory)
-    for (GCObject *obj = gc->head; obj; obj = obj->next) {
-        if (obj->type == GC_CLOSURE) {
-            Closure *closure = (Closure *)(obj + 1);
-            Variable *var, *tmp;
-            HASH_ITER(hh, closure->defs, var, tmp) {
-                HASH_DEL(closure->defs, var);
-            }
-        }
-    }
+    // First pass: release every closure's hash table while all Variables are alive
+    release_closure_tables(gc, true);
 
     // Second pass: free all objects
     GCObject *obj = gc->head;

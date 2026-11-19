@@ -2583,6 +2583,30 @@ START_TEST(test_gc_deeply_nested_list)
 }
 END_TEST
 
+// Every call makes a closure with a variable table; sweeping dead ones must
+// release the table without touching the (possibly already freed) Variables.
+START_TEST(test_gc_sweeps_call_closures)
+{
+    GC gc;
+    gc_init(&gc);
+    Closure *closure = make_closure(&gc, NULL);
+    prelude(&gc, closure);
+    eval_string(&gc, closure, "(define f (lambda (a b) (+ a b)))");
+    gc_collect(&gc, closure);
+    size_t baseline = gc.num_objects;
+
+    for (int i = 0; i < 20000; i++) {
+        Value *r = eval_string(&gc, closure, "(f 1 2)");
+        ck_assert_int_eq(r->data.as_int, 3);
+        if (i % 500 == 0) gc_collect(&gc, closure);
+    }
+    gc_collect(&gc, closure);
+    ck_assert_uint_le(gc.num_objects, baseline + 50);
+    ck_assert_int_eq(eval_string(&gc, closure, "(f 4 5)")->data.as_int, 9);
+    gc_free_all(&gc);
+}
+END_TEST
+
 // --- Uninterned symbols: unique and gensym ---
 
 static bool eval_bool(GC *gc, Closure *closure, const char *src) {
@@ -2872,6 +2896,7 @@ Suite *eval_suite(void)
     tcase_add_test(tc_core, test_panic_session_survives);
     tcase_add_test(tc_core, test_gc_long_list);
     tcase_add_test(tc_core, test_gc_deeply_nested_list);
+    tcase_add_test(tc_core, test_gc_sweeps_call_closures);
     tcase_add_test(tc_core, test_eval_float);
     tcase_add_test(tc_core, test_eval_string);
     tcase_add_test(tc_core, test_eval_add);
