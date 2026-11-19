@@ -170,9 +170,14 @@ Value *intrinsic_contains(GC *gc, Closure *closure, Value *args) {
 
 Value *intrinsic_count(GC *gc, Closure *closure, Value *args) {
     (void)closure;
-    // (count dict-or-set)
+    // (count coll): entries of a dict or set, items of a list, bytes of a string
     expect_args("count", args, 1);
-    Value *coll = expect_dict_or_set(gc, "count", list_index(args, 0));
+    Value *coll = list_index(args, 0);
+    if (coll->type == STRING) return make_int(gc, (int)utstring_len(coll->data.as_string));
+    if (coll->type == CONS || is_nil(coll)) return make_int(gc, list_length(coll));
+    if (coll->type != DICT && coll->type != SET) {
+        lyra_panic("count expects a dict, set, list or string, but got %s", repr_of(gc, coll));
+    }
     return make_int(gc, (int)coll->data.as_champ->size);
 }
 

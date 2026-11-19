@@ -117,6 +117,17 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function(gc, closure, "is-dict", &intrinsic_is_dict);
     define_intrinsic_function(gc, closure, "is-set", &intrinsic_is_set);
 
+    // Strings (see intrinsics_string.c)
+    define_intrinsic_function(gc, closure, "byte", &intrinsic_byte);
+    define_intrinsic_function(gc, closure, "slice", &intrinsic_slice);
+    define_intrinsic_function(gc, closure, "find", &intrinsic_find);
+    define_intrinsic_function(gc, closure, "starts-with?", &intrinsic_starts_with);
+    define_intrinsic_function(gc, closure, "ends-with?", &intrinsic_ends_with);
+    define_intrinsic_function(gc, closure, "parse-int", &intrinsic_parse_int);
+    define_intrinsic_function(gc, closure, "bytes", &intrinsic_bytes);
+    define_intrinsic_function(gc, closure, "from-bytes", &intrinsic_from_bytes);
+    define_intrinsic_function(gc, closure, "join", &intrinsic_join);
+
     // Whole-file I/O
     define_intrinsic_function(gc, closure, "read-file", &intrinsic_read_file);
     define_intrinsic_function(gc, closure, "write-file", &intrinsic_write_file);

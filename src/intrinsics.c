@@ -471,12 +471,17 @@ Value *intrinsic_eq(GC *gc, Closure *closure, Value *args) {
 
 typedef enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE } CmpOp;
 
-// Shared by < <= > >=. Exactly two numbers of the same type.
+// Shared by < <= > >=. Exactly two numbers of the same type, or two strings
+// (compared bytewise).
 static Value *compare_numbers(GC *gc, const char *name, CmpOp op, Value *args) {
     expect_arity(name, args, 2);
 
     Value *a = list_index(args, 0);
     Value *b = list_index(args, 1);
+    if (a->type == STRING && b->type == STRING) {
+        int c = string_compare(a, b);
+        return (op == CMP_LT ? c < 0 : op == CMP_LE ? c <= 0 : op == CMP_GT ? c > 0 : c >= 0) ? TRUE : FALSE;
+    }
     expect_number(gc, name, a);
     expect_number(gc, name, b);
     if (a->type != b->type) {
@@ -873,7 +878,8 @@ static Value *write_strings(Value *args, const char *name, bool newline) {
 
     FILE *out = print_stream ? print_stream : stdout;
     for (Value *p = args; !is_nil(p); p = list_tail(p)) {
-        fputs(utstring_body(list_head(p)->data.as_string), out);
+        UT_string *piece = list_head(p)->data.as_string;
+        fwrite(utstring_body(piece), 1, utstring_len(piece), out);
     }
     if (newline) fputc('\n', out);
     fflush(out);
@@ -1055,7 +1061,7 @@ Value *intrinsic_string(GC *gc, Closure *closure, Value *args) {
 
         switch (arg->type) {
             case STRING:
-                utstring_printf(str, "%s", utstring_body(arg->data.as_string));
+                utstring_concat(str, arg->data.as_string);
                 break;
             case SYMBOL:
                 utstring_printf(str, "%s", utstring_body(arg->data.as_symbol));
@@ -1079,7 +1085,7 @@ Value *intrinsic_string(GC *gc, Closure *closure, Value *args) {
         if (arg->type != STRING) {
             lyra_panic("string: multiple arguments must all be strings");
         }
-        utstring_printf(result, "%s", utstring_body(arg->data.as_string));
+        utstring_concat(result, arg->data.as_string);
         args = list_tail(args);
     }
     return make_string(gc, result);
@@ -1099,7 +1105,10 @@ Value *intrinsic_symbol(GC *gc, Closure *closure, Value *args) {
 
     switch (arg->type) {
         case STRING:
-            utstring_printf(sym, "%s", utstring_body(arg->data.as_string));
+            if (memchr(utstring_body(arg->data.as_string), 0, utstring_len(arg->data.as_string))) {
+                lyra_panic("symbol: a symbol name cannot contain a NUL byte");
+            }
+            utstring_concat(sym, arg->data.as_string);
             break;
         case SYMBOL:
             // Symbol to symbol is identity

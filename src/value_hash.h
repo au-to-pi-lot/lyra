@@ -7,8 +7,8 @@
 //
 //   int      tag, the value as a 64-bit word
 //   boolean  tag, one byte
-//   string   tag, the bytes up to the first NUL (values_equal compares with
-//            strcmp), then a 0xFF terminator, so ("ab" "c") and ("a" "bc")
+//   string   tag, all the bytes, NULs included (values_equal compares
+//            by length and memcmp), then a 0xFF terminator, so ("ab" "c") and ("a" "bc")
 //            differ as list keys
 //   symbol   tag, the length and bytes of its identity key (symbol.h): the
 //            name for an interned symbol, name + NUL + serial for an

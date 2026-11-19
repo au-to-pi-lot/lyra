@@ -134,7 +134,7 @@ Design settled in issue #31, implemented in #33. `DICT` and `SET` values hold `d
 Split like Rust's `Hash`/`Hasher`: [src/value_hash.c](src/value_hash.c) decides *what* each type feeds, [src/hash.c](src/hash.c) is the only place that knows the algorithm.
 - **Hasher**: streaming SipHash-1-3 (`hasher_init`/`hasher_write`/`hasher_write_u8`/`hasher_write_u64`/`hasher_finish`; words are fed as 8 little-endian bytes). Tested against reference values from CPython's own SipHash-1-3 (`hash(bytes)` with `PYTHONHASHSEED` set).
 - **Key**: random per process, from `platform_random_bytes` ([src/platform_random.c](src/platform_random.c): `BCryptGenRandom` on Windows, `/dev/urandom` elsewhere; isolated from `value.h` for the `windows.h` reason above; CMake links `bcrypt` on Windows). Setting `LYRA_HASH_SEED` to a decimal integer derives the key from it (splitmix64), for reproducible runs; anything else in it is an error (message on stderr, exit 1). The key is drawn lazily on the first hash.
-- **Format** (`a == b` implies `hash(a) == hash(b)`, with `values_equal` as the equality): a type tag byte first, so `1` and `"1"` differ. Ints: the value as a 64-bit word. Booleans: one byte. Strings: bytes up to the first NUL (matching `values_equal`'s `strcmp`), then a `0xFF` terminator, so `("ab" "c")` and `("a" "bc")` differ. Symbols: length and bytes of the identity key, so interned symbols hash by name and uninterned ones by their serial, never by pointer (not cached at creation: the reader has no intern table to cache in). Lists: length, then elements. Dicts/sets: count plus the wrapping sum of an independent hash per entry, which is order-independent.
+- **Format** (`a == b` implies `hash(a) == hash(b)`, with `values_equal` as the equality): a type tag byte first, so `1` and `"1"` differ. Ints: the value as a 64-bit word. Booleans: one byte. Strings: all bytes, NULs included (matching `values_equal`, which compares length then `memcmp`), then a `0xFF` terminator, so `("ab" "c")` and `("a" "bc")` differ. Symbols: length and bytes of the identity key, so interned symbols hash by name and uninterned ones by their serial, never by pointer (not cached at creation: the reader has no intern table to cache in). Lists: length, then elements. Dicts/sets: count plus the wrapping sum of an independent hash per entry, which is order-independent.
 - **Equality** (`values_equal`) moved from `intrinsics.c` to [src/types/value.c](src/types/value.c) so the trie can use it; it compares dicts and sets with `champ_equal`.
 
 ## Recursion & Macros
@@ -211,10 +211,22 @@ Available built-in functions and special forms defined in [src/prelude.c](src/pr
 - `set-add` / `set-remove` - `(set-add s x)`, `(set-remove s x)`
 - `union`, `intersection`, `difference` - one or more sets: `(union a b c)`, `(difference a b c)` = members of `a` in neither `b` nor `c`. (`+`/`-` have no type dispatch, so these are named functions)
 - `contains?` - `(contains? d-or-s k)`: key of a dict / member of a set
-- `count` - `(count d-or-s)`: number of entries (dicts and sets only, not lists)
+- `count` - `(count coll)`: entries of a dict or set, items of a list, **bytes** of a string. Anything else panics. (Stand-in for a future collection-size trait)
 - `keys`, `values`, `entries` - lists of a dict's keys, values, `(key value)` pairs; `members` - a set's members as a list. Order unspecified. (Stand-ins until the iterator protocol exists)
 - `is-dict`, `is-set` - type predicates
 - Keys and members must have total equality: floats, functions and macros panic, including when nested in a list key (`(set 1 2.0)` → `set: a set member must have total equality, but 2.0 is a float`). Values can be anything
+
+**Strings** ([src/intrinsics_string.c](src/intrinsics_string.c)): UTF-8 text addressed by **byte offset** (DESIGN.md "Strings"). There is no char type: a byte is an int 0-255, and code-point iteration is deferred. UTF-8 is not validated (issue #50). Strings are length-tracked `UT_string`s, so embedded NUL bytes work in everything below, including `=` and hashing (`values_equal` and `value_hash` use length + `memcmp`, not `strcmp`). Failures that aren't type errors return `missing` (see "Dicts and sets"), never a panic.
+- `count` - byte length (see above)
+- `byte` - `(byte s i)` → the byte at offset `i` as an int 0-255, or `missing` if `i` is outside `[0, count)`
+- `slice` - `(slice s start end)` → the bytes `[start, end)`, or `missing` if not `0 <= start <= end <= count`, or if `start` or `end` lands on a UTF-8 continuation byte (`10xxxxxx`), which would split a multi-byte sequence. This is a cheap boundary check, not validation
+- `find` - `(find s sub)` / `(find s sub start)` → byte offset of the first occurrence at or after `start`, or `missing`. An empty `sub` matches at `start`. A `start` outside `[0, count]` or on a continuation byte gives `missing`
+- `starts-with?`, `ends-with?` - `(starts-with? s prefix)`, `(ends-with? s suffix)` → boolean
+- `parse-int` - `(parse-int s)` → int, or `missing` if `s` isn't an optionally signed run of decimal digits filling the whole string (no whitespace, no trailing text) or is outside `INT_MIN..INT_MAX` (same range rule as integer literals)
+- `bytes` / `from-bytes` - `(bytes s)` → list of ints; `(from-bytes list)` → string. A list element that isn't an int in 0-255 panics
+- `join` - `(join list-of-strings separator)`: sizes the result first and fills it in one pass, so building big output is linear, not O(n^2) like repeated `string`. A non-string element panics
+- `<`, `<=`, `>`, `>=` also accept two strings, compared **bytewise** (`memcmp` over the common prefix, then the shorter string is smaller). That is not a locale or Unicode collation order. Mixing a string and a number panics as before
+- NUL-safe throughout: `string` concatenation, `print`/`write` (`fwrite` of the full length) and `repr` keep every byte. `repr` prints a NUL as `\0`, and the reader's string literals accept `\0`, so `repr` round-trips. The reader's escapes are `\n \t \r \\ \" \0`; any other `\x` is a parse error (message on stderr naming the escape, `NULL` result, like an out-of-range integer literal), so a meaning can be added later without breaking programs. `(symbol s)` panics if `s` contains a NUL, because symbol names are C strings (and an uninterned key is `name NUL serial`). Still truncating: `panic` messages (formatted through `%s`)
 
 **Type Constructors** (polymorphic):
 - `string` - Convert to string or concatenate
@@ -511,7 +523,8 @@ The Lyra interpreter supports multiple modes:
 - **Test Coverage**: 150 tests across 4 suites, all passing ✅ (including 15 `match` pattern-matching tests)
   - `test_eval.c`: 91 tests covering evaluation, special forms, macros, recursion, folds, list functions, gensym, match patterns, print/write, panics
   - `test_list.c`: 25 tests covering list operations
-  - `test_parser.c`: 16 tests covering lexing and parsing (including integer literal bounds)
+  - `test_parser.c`: 18 tests covering lexing and parsing (including integer literal bounds)
+  - `test_string.c`: 18 tests for the string intrinsics: `count`, `byte`, `slice` (including UTF-8 boundary rejection), `find`, `starts-with?`/`ends-with?`, `parse-int` bounds, `bytes`/`from-bytes` round trips and errors, `join`, bytewise ordering, and NUL handling in equality, hashing, `string`, `write`, `repr`/reader round trip, `symbol` and GC
   - `test_dict.c`: 23 tests for dicts, sets and hashing: SipHash-1-3 reference vectors and streaming, equal-values-hash-equal, trie persistence, random insert/remove workloads checked against an array and `champ_validate` (normal hash, all-colliding hash, few-bucket hash, deep-path hashes), canonical equality across insertion orders, `missing` vs `nil`, unhashable keys, printing round trips, set algebra, 3000-key dicts, and GC survival (including collision nodes)
   - GC tests include a collection over a 1M-element list and a 100k-deep nested list (`test_eval.c`), which overflowed the recursive marker
 - Run tests with `make test` (Linux/macOS) or `ctest --test-dir build -C Debug` (Windows)

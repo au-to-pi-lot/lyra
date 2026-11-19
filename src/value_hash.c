@@ -50,9 +50,8 @@ static void hash_into(Hasher *h, Value *v) {
             hasher_write_u8(h, v->data.as_boolean ? 1 : 0);
             break;
         case STRING: {
-            const char *body = utstring_body(v->data.as_string);
             hasher_write_u8(h, HASH_TAG_STRING);
-            hasher_write(h, body, strlen(body));
+            hasher_write(h, utstring_body(v->data.as_string), utstring_len(v->data.as_string));
             hasher_write_u8(h, 0xff);
             break;
         }
