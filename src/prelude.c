@@ -117,6 +117,10 @@ void prelude(GC *gc, Closure *closure) {
     define_intrinsic_function(gc, closure, "is-dict", &intrinsic_is_dict);
     define_intrinsic_function(gc, closure, "is-set", &intrinsic_is_set);
 
+    // Whole-file I/O
+    define_intrinsic_function(gc, closure, "read-file", &intrinsic_read_file);
+    define_intrinsic_function(gc, closure, "write-file", &intrinsic_write_file);
+
     // Directory operations
     define_intrinsic_function(gc, closure, "list-directory", &intrinsic_list_directory);
 
