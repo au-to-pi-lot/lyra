@@ -1,6 +1,15 @@
-#include "gc.h"
-#include <stdlib.h>
+// utarray's out-of-memory hook (default: a silent exit(-1)). It is expanded at
+// each use, so it only has to be defined before the utarray macros are used.
 #include <stdio.h>
+#include <stdlib.h>
+#ifndef utarray_oom
+#define utarray_oom() do { \
+        fputs("lyra: out of memory growing the GC mark stack\n", stderr); \
+        abort(); \
+    } while (0)
+#endif
+
+#include "gc.h"
 #include <string.h>
 #include "types/list.h"
 #include "types/champ.h"
@@ -16,9 +25,8 @@ void gc_init(GC *gc) {
     gc->max_objects = GC_INITIAL_THRESHOLD;
     gc->gensym_counter = 0;
     gc->uninterned_counter = 0;
-    gc->mark_stack = NULL;
-    gc->mark_len = 0;
-    gc->mark_cap = 0;
+    static const UT_icd ptr_icd = {sizeof(void *), NULL, NULL, NULL};
+    utarray_new(gc->mark_stack, &ptr_icd);
 }
 
 // Every GC object is one malloc block: a GCObject header immediately followed
@@ -105,17 +113,7 @@ static void push_object(GC *gc, void *p) {
     if (obj->marked) return;
     obj->marked = true;
 
-    if (gc->mark_len == gc->mark_cap) {
-        size_t cap = gc->mark_cap ? gc->mark_cap * 2 : 256;
-        void **stack = realloc(gc->mark_stack, cap * sizeof(void *));
-        if (!stack) {
-            fputs("lyra: out of memory growing the GC mark stack\n", stderr);
-            abort();
-        }
-        gc->mark_stack = stack;
-        gc->mark_cap = cap;
-    }
-    gc->mark_stack[gc->mark_len++] = p;
+    utarray_push_back(gc->mark_stack, &p);
 }
 
 static void push_value(GC *gc, Value *value) {
@@ -205,9 +203,13 @@ static void gc_trace(GC *gc, void *obj, GCObjectType type) {
 // Mark everything reachable from the root closure
 static void gc_mark(GC *gc, Closure *root) {
     push_object(gc, root);
-    while (gc->mark_len > 0) {
-        void *obj = gc->mark_stack[--gc->mark_len];        gc_trace(gc, obj, header_of(obj)->type);
+    void **top;
+    while ((top = (void **)utarray_back(gc->mark_stack)) != NULL) {
+        void *obj = *top;
+        utarray_pop_back(gc->mark_stack);
+        gc_trace(gc, obj, header_of(obj)->type);
     }
+    utarray_clear(gc->mark_stack);  // already empty; keeps the buffer for the next collection
 }
 
 // Release an object and its header. Only UT_string owns anything beyond its
@@ -271,7 +273,6 @@ void gc_free_all(GC *gc) {
     }
     gc->head = NULL;
     gc->num_objects = 0;
-    free(gc->mark_stack);
+    utarray_free(gc->mark_stack);
     gc->mark_stack = NULL;
-    gc->mark_len = gc->mark_cap = 0;
 }
