@@ -107,3 +107,15 @@ Value *intrinsic_entries(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_members(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_is_dict(GC *gc, Closure *closure, Value *args);
 Value *intrinsic_is_set(GC *gc, Closure *closure, Value *args);
+
+// Strings (intrinsics_string.c)
+int string_compare(Value *a, Value *b);  // bytewise: -1, 0 or 1
+Value *intrinsic_byte(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_slice(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_find(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_starts_with(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_ends_with(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_parse_int(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_bytes(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_from_bytes(GC *gc, Closure *closure, Value *args);
+Value *intrinsic_join(GC *gc, Closure *closure, Value *args);

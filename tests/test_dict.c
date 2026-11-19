@@ -578,7 +578,7 @@ START_TEST(test_dict_bad_arguments)
     ck_assert_panics(&in, "(get (set 'a) 'a)", "get expects a dict, but got (set 'a)");
     ck_assert_panics(&in, "(get (dict))", "get expects a dict, a key and an optional default, but got 1 arguments");
     ck_assert_panics(&in, "(assoc (dict) 'a)", "assoc expects exactly 3 arguments, but got 2");
-    ck_assert_panics(&in, "(count '(1 2))", "count expects a dict or a set, but got (1 2)");
+    ck_assert_panics(&in, "(count 5)", "count expects a dict, set, list or string, but got 5");
     ck_assert_panics(&in, "(set-add (dict) 1)", "set-add expects a set, but got (dict)");
     ck_assert_panics(&in, "(union (set) 1)", "union expects a set, but got 1");
     ck_assert_panics(&in, "(union)", "union expects at least 1 argument, but got 0");

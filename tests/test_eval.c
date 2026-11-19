@@ -2348,7 +2348,8 @@ START_TEST(test_loud_comparison)
     ck_assert_panics(&gc, closure, "(> 1)", "> expects exactly 2 arguments, but got 1");
     ck_assert_panics(&gc, closure, "(>=)", ">= expects exactly 2 arguments, but got 0");
     ck_assert_panics(&gc, closure, "(< 1 \"a\")", "< expects numbers, but got \"a\"");
-    ck_assert_panics(&gc, closure, "(> \"a\" \"b\")", "> expects numbers, but got \"a\"");
+    ck_assert_panics(&gc, closure, "(> \"a\" 1)", "> expects numbers, but got \"a\"");
+    ck_assert_str_eq(eval_repr(&gc, closure, "(> \"b\" \"a\")"), "true");  // strings compare bytewise
     ck_assert_panics(&gc, closure, "(< 1 2.0)", "< cannot compare 1 and 2.0: mixed int and float");
 
     // = across different types is simply false (not an error)

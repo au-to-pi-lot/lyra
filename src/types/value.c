@@ -39,7 +39,10 @@ bool values_equal(Value *a, Value *b) {
         case BOOLEAN:
             return a->data.as_boolean == b->data.as_boolean;
         case STRING:
-            return strcmp(utstring_body(a->data.as_string), utstring_body(b->data.as_string)) == 0;
+            // Length-tracked: strings can hold NUL bytes
+            return utstring_len(a->data.as_string) == utstring_len(b->data.as_string) &&
+                   memcmp(utstring_body(a->data.as_string), utstring_body(b->data.as_string),
+                          utstring_len(a->data.as_string)) == 0;
         case SYMBOL:
             return symbol_eq(a, b);
         case DICT:

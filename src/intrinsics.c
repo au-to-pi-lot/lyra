@@ -470,12 +470,17 @@ Value *intrinsic_eq(GC *gc, Closure *closure, Value *args) {
 
 typedef enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE } CmpOp;
 
-// Shared by < <= > >=. Exactly two numbers of the same type.
+// Shared by < <= > >=. Exactly two numbers of the same type, or two strings
+// (compared bytewise).
 static Value *compare_numbers(GC *gc, const char *name, CmpOp op, Value *args) {
     expect_arity(name, args, 2);
 
     Value *a = list_index(args, 0);
     Value *b = list_index(args, 1);
+    if (a->type == STRING && b->type == STRING) {
+        int c = string_compare(a, b);
+        return (op == CMP_LT ? c < 0 : op == CMP_LE ? c <= 0 : op == CMP_GT ? c > 0 : c >= 0) ? TRUE : FALSE;
+    }
     expect_number(gc, name, a);
     expect_number(gc, name, b);
     if (a->type != b->type) {
