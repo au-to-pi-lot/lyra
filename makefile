@@ -1,11 +1,11 @@
 CC = gcc
 
 ifdef RELEASE
-CFLAGS = -Wall -Wextra -std=c11 -O3 -DNDEBUG -flto -Ivcpkg_installed/x64-linux/include
+CFLAGS = -Wall -Wextra -std=gnu11 -O3 -DNDEBUG -flto -Ivcpkg_installed/x64-linux/include
 LDFLAGS = -Lvcpkg_installed/x64-linux/lib -flto
 STRIP = strip
 else
-CFLAGS = -Wall -Wextra -std=c11 -g -Ivcpkg_installed/x64-linux/include
+CFLAGS = -Wall -Wextra -std=gnu11 -g -Ivcpkg_installed/x64-linux/include
 LDFLAGS = -Lvcpkg_installed/x64-linux/lib
 STRIP = @true
 endif

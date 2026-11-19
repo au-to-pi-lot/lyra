@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <utstring.h>
 #include <uthash.h>
+#include <utarray.h>
 
 typedef struct Value Value;
 typedef struct Cons Cons;
@@ -45,13 +46,13 @@ typedef enum GCObjectType {
     GC_CHAMP_NODE  // a dict/set trie node (types/champ.h)
 } GCObjectType;
 
-// GC-managed object header
+// GC object header. Lives immediately before the object it describes (one
+// malloc block), so an object's header is `(GCObject *)object - 1`.
 typedef struct GCObject {
     struct GCObject *next;
     bool marked;
     size_t size;
     GCObjectType type;
-    void *data;  // pointer to the actual Value/Cons/Closure/etc
 } GCObject;
 
 // GC state
@@ -61,6 +62,7 @@ typedef struct GC {
     size_t max_objects;  // trigger GC when we hit this
     size_t gensym_counter;  // numbers gensym print names (G__0, G__1, ...)
     size_t uninterned_counter;  // serial in uninterned symbol keys (see symbol.h)
+    UT_array *mark_stack;  // the mark phase's worklist of object pointers, kept between collections
 } GC;
 
 /// @struct Cons

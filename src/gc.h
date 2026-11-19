@@ -16,7 +16,7 @@ Closure *gc_alloc_closure(GC *gc);
 Callable *gc_alloc_callable(GC *gc);
 Variable *gc_alloc_variable(GC *gc);
 UT_string *gc_alloc_string(GC *gc);
-// A dict/set trie node with room for `nslots` slots; only `header` is set.
+// A dict/set trie node with room for `nslots` slots.
 ChampNode *gc_alloc_champ_node(GC *gc, size_t nslots);
 
 // Sweep phase: free all unmarked objects

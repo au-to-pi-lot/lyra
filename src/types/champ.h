@@ -22,8 +22,8 @@
 //   its contents, never on the order of insertions and removals, which makes
 //   equality a parallel walk of two tries.
 //
-// Nodes are GC objects (GC_CHAMP_NODE); gc.c traces them via `header`.
-// The empty tries are static and not GC-registered (header == NULL).
+// Nodes are GC objects (GC_CHAMP_NODE); gc.c traces them.
+// The empty tries are static and not GC-registered (champ_is_static).
 //
 // Hashing: callers pass each key's hash, computed by champ_hash (which they
 // call only after checking the key is hashable; see value_hash.h). The trie
@@ -41,7 +41,6 @@
 #pragma warning(disable : 4200)  // flexible array member: standard C99, but MSVC warns
 #endif
 struct ChampNode {
-    GCObject *header;   // the node's GC header (NULL for the static empty tries)
     uint32_t datamap;   // slots holding an inline entry
     uint32_t nodemap;   // slots holding a child node
     size_t size;        // number of entries in this subtree
@@ -55,6 +54,9 @@ struct ChampNode {
 
 #define CHAMP_DICT_STRIDE 2
 #define CHAMP_SET_STRIDE 1
+
+// True for the shared empty tries, which are not GC objects (no GC header).
+bool champ_is_static(const ChampNode *node);
 
 // The shared empty trie for a stride.
 ChampNode *champ_empty(uint8_t stride);

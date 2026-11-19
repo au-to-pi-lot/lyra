@@ -698,18 +698,16 @@ START_TEST(test_dicts_survive_gc)
     Interp in;
     interp_init(&in);
     char buf[160];
-    // Kept modest: gc_mark_object searches the whole object list for every
-    // marked object, so a collection costs (live objects x heap objects).
     run(&in, "(define d (dict))");
     run(&in, "(define old nil)");
-    for (int i = 0; i < 400; i++) {
+    for (int i = 0; i < 3000; i++) {
         // Values are freshly allocated lists and nested sets, so a missed
         // trace would free something still reachable from the trie
         snprintf(buf, sizeof buf,
                  "(define d (assoc d (string \"key\" (string %d)) (cons %d (cons (set %d) nil))))", i, i, i);
         run(&in, buf);
         if (i == 150) run(&in, "(define old d)");
-        if (i % 50 == 0) gc_collect(&in.gc, in.global);
+        if (i % 500 == 0) gc_collect(&in.gc, in.global);
     }
     // Garbage: intermediate tries that nothing references
     for (int i = 0; i < 50; i++) {
@@ -722,15 +720,15 @@ START_TEST(test_dicts_survive_gc)
 
     // Allocate over the freed memory, then check everything is intact
     for (int i = 0; i < 1000; i++) run(&in, "(cons 1 (cons \"filler\" nil))");
-    ck_assert_int_eq(run_int(&in, "(count d)"), 400);
+    ck_assert_int_eq(run_int(&in, "(count d)"), 3000);
     ck_assert_int_eq(run_int(&in, "(count old)"), 151);
     check_valid(run(&in, "d")->data.as_champ);
     check_valid(run(&in, "old")->data.as_champ);
-    for (int i = 0; i < 400; i += 3) {
+    for (int i = 0; i < 3000; i += 7) {
         snprintf(buf, sizeof buf, "(= (get d \"key%d\") (cons %d (cons (set %d) nil)))", i, i, i);
         ck_assert_msg(run_true(&in, buf), "lost entry %d", i);
     }
-    ck_assert(run_true(&in, "(= (get old \"key300\") missing)"));
+    ck_assert(run_true(&in, "(= (get old \"key3000\") missing)"));
     ck_assert(run_true(&in, "(= (get old \"key150\") (cons 150 (cons (set 150) nil)))"));
     interp_free(&in);
 }

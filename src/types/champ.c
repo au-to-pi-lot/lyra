@@ -9,11 +9,15 @@
 #define CHAMP_BITS 5
 #define CHAMP_HASH_BITS 64
 
-static ChampNode EMPTY_DICT = {NULL, 0, 0, 0, CHAMP_DICT_STRIDE, false};
-static ChampNode EMPTY_SET = {NULL, 0, 0, 0, CHAMP_SET_STRIDE, false};
+static ChampNode EMPTY_DICT = {0, 0, 0, CHAMP_DICT_STRIDE, false};
+static ChampNode EMPTY_SET = {0, 0, 0, CHAMP_SET_STRIDE, false};
 
 ChampNode *champ_empty(uint8_t stride) {
     return stride == CHAMP_SET_STRIDE ? &EMPTY_SET : &EMPTY_DICT;
+}
+
+bool champ_is_static(const ChampNode *node) {
+    return node == &EMPTY_DICT || node == &EMPTY_SET;
 }
 
 // ---- Bit twiddling ---------------------------------------------------------
